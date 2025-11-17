@@ -55,21 +55,108 @@ python app.py
 
 ## 部署到 Render
 
-### 方法一：使用 render.yaml（推薦）
+### 前置準備
 
-1. 將此專案推送到 GitHub
-2. 在 Render 中選擇 "New Blueprint"
-3. 連接你的 GitHub 倉庫
-4. Render 會自動讀取 `render.yaml` 並部署
+1. **確保專案已推送到 GitHub**
+   ```bash
+   git init
+   git add .
+   git commit -m "Initial commit"
+   git remote add origin https://github.com/你的用戶名/VideoDownloader.git
+   git push -u origin main
+   ```
+
+2. **註冊 Render 帳號**
+   - 前往 [Render](https://render.com)
+   - 使用 GitHub 帳號登入（推薦）
+
+### 方法一：使用 render.yaml 自動部署（推薦）
+
+1. **登入 Render Dashboard**
+   - 前往 https://dashboard.render.com
+
+2. **創建 Blueprint**
+   - 點擊左側選單的 "Blueprints"
+   - 點擊 "New Blueprint"
+   - 選擇 "Public Git repository"
+   - 輸入你的 GitHub 倉庫 URL（例如：`https://github.com/你的用戶名/VideoDownloader`）
+   - 點擊 "Apply"
+
+3. **自動部署**
+   - Render 會自動讀取 `render.yaml` 配置文件
+   - 自動設置所有必要的配置
+   - 部署完成後會提供一個 URL（例如：`https://video-downloader.onrender.com`）
 
 ### 方法二：手動部署
 
-1. 在 Render 中創建新的 Web Service
-2. 連接你的 GitHub 倉庫
-3. 設置以下配置：
+1. **創建新的 Web Service**
+   - 在 Render Dashboard 點擊 "New +"
+   - 選擇 "Web Service"
+
+2. **連接 GitHub 倉庫**
+   - 選擇 "Connect GitHub"
+   - 授權 Render 訪問你的 GitHub 帳號
+   - 選擇 `VideoDownloader` 倉庫
+
+3. **配置服務設置**
+   - **Name**: `video-downloader`（或你喜歡的名稱）
+   - **Region**: 選擇離你最近的區域（例如：Singapore）
+   - **Branch**: `main`（或你的主分支名稱）
+   - **Root Directory**: 留空（如果專案在根目錄）
+   - **Runtime**: `Python 3`
    - **Build Command**: `pip install -r requirements.txt`
    - **Start Command**: `gunicorn app:app`
-   - **Environment**: Python 3
+
+4. **設置環境變數（可選）**
+   - 點擊 "Advanced" → "Add Environment Variable"
+   - 如果需要，可以設置：
+     - `PYTHON_VERSION`: `3.11.0`
+     - `PORT`: Render 會自動設置，無需手動配置
+
+5. **選擇方案**
+   - **Free Tier**: 適合測試，但服務會在 15 分鐘無活動後休眠
+   - **Starter/Pro**: 付費方案，服務始終運行
+
+6. **部署**
+   - 點擊 "Create Web Service"
+   - Render 會開始構建和部署你的應用
+   - 等待部署完成（通常需要 5-10 分鐘）
+
+### 部署後檢查
+
+1. **查看部署日誌**
+   - 在 Render Dashboard 中點擊你的服務
+   - 查看 "Logs" 標籤頁確認沒有錯誤
+
+2. **測試應用**
+   - 訪問 Render 提供的 URL
+   - 測試影片下載功能
+
+### 常見問題
+
+**Q: 部署失敗，顯示 "Module not found" 錯誤**
+- 確保 `requirements.txt` 包含所有依賴
+- 檢查 Build Command 是否正確執行
+
+**Q: 服務啟動後立即崩潰**
+- 檢查 Start Command 是否為 `gunicorn app:app`
+- 確認 `app.py` 中的 Flask 應用實例名稱為 `app`
+
+**Q: 下載功能無法使用**
+- 檢查 Render 服務的日誌查看錯誤訊息
+- 確認臨時文件目錄權限正確
+
+**Q: Free Tier 服務休眠**
+- Free Tier 在 15 分鐘無活動後會休眠
+- 首次訪問休眠服務需要約 30-60 秒喚醒時間
+- 考慮升級到付費方案以保持服務始終運行
+
+### 更新部署
+
+當你推送新的更改到 GitHub 時：
+- Render 會自動檢測並重新部署
+- 你可以在 Dashboard 中手動觸發重新部署
+- 點擊 "Manual Deploy" → "Deploy latest commit"
 
 ## 使用說明
 
