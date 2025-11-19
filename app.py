@@ -35,9 +35,25 @@ status_lock = threading.Lock()
 webhook_callbacks = {}
 webhook_lock = threading.Lock()
 
+# Prepare cookies temp file if raw content provided
+if COOKIES_CONTENT and not COOKIES_FILE:
+    try:
+        COOKIE_TEMP_FILE = os.path.join(DOWNLOAD_DIR, 'yt_cookies.txt')
+        with open(COOKIE_TEMP_FILE, 'w', encoding='utf-8') as cookie_file:
+            cookie_file.write(COOKIES_CONTENT.strip())
+    except Exception as e:
+        print(f"Error writing cookies content: {e}")
+        COOKIE_TEMP_FILE = None
+
 # Preferred download settings
 PREFERRED_DEFAULT_FORMAT = 'bv*+ba/bestvideo+bestaudio/best'
 MERGE_OUTPUT_FORMAT = 'mp4'
+ALLOWED_VIDEO_EXTENSIONS = ('.mp4', '.m4v', '.mov', '.webm', '.mkv', '.flv', '.avi')
+
+# Cookie configuration
+COOKIES_FILE = os.environ.get('YTDLP_COOKIES_FILE')
+COOKIES_CONTENT = os.environ.get('YTDLP_COOKIES')
+COOKIE_TEMP_FILE = None
 
 # 导入翻译数据（直接嵌入代码，不依赖外部文件）
 try:
@@ -93,6 +109,14 @@ def normalize_format_id(format_id):
     if not format_id or format_id.lower() in ('best', 'default'):
         return PREFERRED_DEFAULT_FORMAT
     return format_id
+
+def get_cookie_file():
+    """Return cookie file path if available."""
+    candidates = [COOKIES_FILE, COOKIE_TEMP_FILE]
+    for path in candidates:
+        if path and os.path.exists(path):
+            return path
+    return None
 
 def t(key, lang=None):
     """翻译函数"""
@@ -150,6 +174,63 @@ def is_valid_url(url):
     except:
         return False
 
+def build_format_options(info, limit=None):
+    """从 yt-dlp info 中构建格式列表"""
+    formats = []
+    seen_ids = set()
+
+    def is_valid_format(fmt):
+        ext = (fmt.get('ext') or '').lower()
+        if not ext or ext == 'webmanifest' or ext == 'json':
+            return False
+        if fmt.get('container') == 'manifest':
+            return False
+        if fmt.get('vcodec') == 'none' and fmt.get('acodec') == 'none':
+            return False
+        return True
+
+    sorted_formats = sorted(
+        info.get('formats', []),
+        key=lambda f: (f.get('height') or 0, f.get('tbr') or 0),
+        reverse=True
+    )
+
+    for fmt in sorted_formats:
+        if not is_valid_format(fmt):
+            continue
+        format_id = fmt.get('format_id')
+        if not format_id or format_id in seen_ids:
+            continue
+        seen_ids.add(format_id)
+
+        resolution = fmt.get('resolution')
+        if not resolution and fmt.get('height'):
+            resolution = f"{fmt['height']}p"
+
+        formats.append({
+            'format_id': format_id,
+            'ext': fmt.get('ext', 'mp4'),
+            'resolution': resolution or fmt.get('format_note', 'unknown'),
+            'filesize': fmt.get('filesize') or 0,
+            'filesize_approx': fmt.get('filesize_approx') or 0,
+            'quality': fmt.get('quality', 0)
+        })
+
+        if limit and len(formats) >= limit:
+            break
+
+    return formats
+
+def is_direct_video_url(url):
+    """检查URL是否指向直接视频文件"""
+    if not url:
+        return False
+    path = urlparse(url).path
+    ext = os.path.splitext(path)[1].lower()
+    if ext and ext in ALLOWED_VIDEO_EXTENSIONS:
+        return True
+    return False
+
 def extract_video_info(url):
     """提取视频信息（包含预览信息）"""
     ydl_opts = {
@@ -157,6 +238,9 @@ def extract_video_info(url):
         'no_warnings': True,
         'extract_flat': False,
     }
+    cookie_file = get_cookie_file()
+    if cookie_file:
+        ydl_opts['cookiefile'] = cookie_file
     
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -164,10 +248,8 @@ def extract_video_info(url):
             # 获取缩略图
             thumbnail = info.get('thumbnail', '')
             if not thumbnail and info.get('thumbnails'):
-                # 尝试获取最高质量的缩略图
                 thumbnails = info.get('thumbnails', [])
                 if thumbnails:
-                    # 优先选择最大尺寸的缩略图
                     best_thumb = max(thumbnails, key=lambda x: x.get('width', 0) * x.get('height', 0), default={})
                     thumbnail = best_thumb.get('url', '') or thumbnails[-1].get('url', '')
             
@@ -181,9 +263,9 @@ def extract_video_info(url):
                 'view_count': info.get('view_count', 0),
                 'upload_date': info.get('upload_date', ''),
                 'webpage_url': info.get('webpage_url', url),
-                'formats': []
+                'formats': build_format_options(info)
             }
-    except Exception as e:
+    except Exception:
         return None
 
 def get_video_formats(url):
@@ -193,25 +275,14 @@ def get_video_formats(url):
         'no_warnings': True,
         'listformats': True,
     }
+    cookie_file = get_cookie_file()
+    if cookie_file:
+        ydl_opts['cookiefile'] = cookie_file
     
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
-            formats = []
-            
-            # 获取最佳视频格式
-            if 'formats' in info:
-                for fmt in info['formats']:
-                    if fmt.get('vcodec') != 'none':  # 有视频编码
-                        formats.append({
-                            'format_id': fmt.get('format_id'),
-                            'ext': fmt.get('ext', 'mp4'),
-                            'resolution': fmt.get('resolution', 'unknown'),
-                            'filesize': fmt.get('filesize', 0),
-                            'quality': fmt.get('quality', 0),
-                        })
-            
-            return formats
+            return build_format_options(info)
     except Exception as e:
         return []
 
@@ -367,22 +438,24 @@ def extract_video_from_html(url):
             # 查找 src 屬性
             if video.get('src'):
                 video_url = urljoin(url, video.get('src'))
-                video_info['video_urls'].append({
-                    'url': video_url,
-                    'type': video.get('type', 'video/mp4'),
-                    'quality': 'unknown'
-                })
+                if is_direct_video_url(video_url):
+                    video_info['video_urls'].append({
+                        'url': video_url,
+                        'type': video.get('type', 'video/mp4'),
+                        'quality': 'unknown'
+                    })
             
             # 查找 <source> 標籤
             sources = video.find_all('source')
             for source in sources:
                 if source.get('src'):
                     video_url = urljoin(url, source.get('src'))
-                    video_info['video_urls'].append({
-                        'url': video_url,
-                        'type': source.get('type', 'video/mp4'),
-                        'quality': source.get('data-quality', 'unknown')
-                    })
+                    if is_direct_video_url(video_url):
+                        video_info['video_urls'].append({
+                            'url': video_url,
+                            'type': source.get('type', 'video/mp4'),
+                            'quality': source.get('data-quality', 'unknown')
+                        })
         
         # 方法2: 查找 JSON-LD 結構化數據
         json_scripts = soup.find_all('script', type='application/ld+json')
@@ -396,7 +469,7 @@ def extract_video_from_html(url):
                 if isinstance(data, dict):
                     if 'name' in data and video_info['title'] == 'Unknown':
                         video_info['title'] = data['name']
-                    if 'contentUrl' in data:
+                    if 'contentUrl' in data and is_direct_video_url(data['contentUrl']):
                         video_info['video_urls'].append({
                             'url': data['contentUrl'],
                             'type': data.get('encodingFormat', 'video/mp4'),
@@ -418,15 +491,15 @@ def extract_video_from_html(url):
             for match in matches:
                 video_url = match.group(1) if match.lastindex else match.group(0)
                 if video_url.startswith('http'):
-                    video_info['video_urls'].append({
-                        'url': video_url,
-                        'type': 'video/mp4',
-                        'quality': 'unknown'
-                    })
+                    full_url = video_url
                 elif video_url.startswith('/') or video_url.startswith('./'):
-                    video_url = urljoin(url, video_url)
+                    full_url = urljoin(url, video_url)
+                else:
+                    full_url = ''
+
+                if full_url and is_direct_video_url(full_url):
                     video_info['video_urls'].append({
-                        'url': video_url,
+                        'url': full_url,
                         'type': 'video/mp4',
                         'quality': 'unknown'
                     })
@@ -502,6 +575,8 @@ def download_video_direct(url, video_url, file_id, task_id=None, lang=None):
     """直接下載視頻文件"""
     if lang is None:
         lang = get_language()
+    if not is_direct_video_url(video_url):
+        return None
     try:
         if task_id:
             update_status(task_id, 'downloading', 'status_connecting', 10, lang)
@@ -743,6 +818,9 @@ def download_video_async(task_id, url, format_id, video_url, method):
                     'preferedformat': MERGE_OUTPUT_FORMAT
                 }]
             }
+            cookie_file = get_cookie_file()
+            if cookie_file:
+                ydl_opts['cookiefile'] = cookie_file
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 update_status(task_id, 'processing', 'status_extracting', 20, lang)
@@ -809,6 +887,9 @@ def download_video_async(task_id, url, format_id, video_url, method):
                                     'preferedformat': MERGE_OUTPUT_FORMAT
                                 }]
                             }
+                        cookie_file = get_cookie_file()
+                        if cookie_file:
+                            ydl_opts['cookiefile'] = cookie_file
                             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                                 info = ydl.extract_info(video_url_to_download, download=True)
                                 downloaded_file = ydl.prepare_filename(info)

@@ -206,6 +206,15 @@ curl -X POST https://your-domain.com/api/v1/download \
 - 設置環境變數 `API_KEY` 以啟用 API 認證
 - 使用 `X-API-Key` header 或 `api_key` query parameter 進行認證
 
+### yt-dlp Cookies（可選）
+
+若下載需登入的影片（例如受限 YouTube 內容），可提供 cookies：
+
+- `YTDLP_COOKIES_FILE`: 指定伺服器上的 cookies.txt 檔案路徑
+- `YTDLP_COOKIES`: 直接在環境變數中提供 cookies 文字（會寫入暫存檔）
+
+上述任一方式提供即足夠；若兩者皆未設定，預設僅能下載公開影片。
+
 ### 支援的網站類型
 
 - **yt-dlp 支援的網站**：YouTube、Vimeo、Twitter、Facebook 等（完整列表請參考 [yt-dlp 文檔](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md)）

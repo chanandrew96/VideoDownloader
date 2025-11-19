@@ -579,6 +579,8 @@
                 const linkKey = downloadLink.getAttribute('data-i18n-key');
                 downloadLink.textContent = t(linkKey);
             }
+
+            refreshFormatOptionsText();
         }
         
         // 切换语言
@@ -664,6 +666,22 @@
             errorDiv.textContent = '';
         }
 
+        
+
+        function refreshFormatOptionsText() {
+            if (!formatSelect || !availableFormats.length) return;
+            Array.from(formatSelect.options).forEach(option => {
+                if (!option.value) {
+                    option.textContent = t('select_format');
+                    return;
+                }
+                const fmt = availableFormats.find(f => f.format_id === option.value);
+                if (fmt) {
+                    option.textContent = buildFormatLabel(fmt);
+                }
+            });
+        }
+
         function formatFilesize(bytes) {
             if (!bytes || bytes <= 0) return '';
             const mb = bytes / (1024 * 1024);
@@ -734,6 +752,10 @@
                 const value = fmt.format_id || `format_${index}`;
                 option.value = value;
                 option.textContent = buildFormatLabel(fmt);
+                option.dataset.ext = fmt.ext || '';
+                option.dataset.filesize = fmt.filesize || 0;
+                option.dataset.filesizeApprox = fmt.filesize_approx || 0;
+                option.dataset.resolution = fmt.resolution || '';
                 if (fmt.video_url) {
                     option.dataset.videoUrl = fmt.video_url;
                 }
