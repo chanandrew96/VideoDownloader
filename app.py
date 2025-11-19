@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify, send_file
+from flask import Flask, render_template, request, jsonify, send_file, session
 from flask_cors import CORS
 import yt_dlp
 import os
@@ -9,14 +9,60 @@ import re
 import requests
 from bs4 import BeautifulSoup
 import json
+import threading
+import time
 
 app = Flask(__name__)
+app.secret_key = os.urandom(24)  # For session management
 CORS(app)
 
 # 配置临时文件目录
 TEMP_DIR = tempfile.gettempdir()
 DOWNLOAD_DIR = os.path.join(TEMP_DIR, 'video_downloads')
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+
+# 下载状态存储
+download_status = {}
+status_lock = threading.Lock()
+
+# 加载翻译文件
+def load_translations():
+    """加载翻译文件"""
+    try:
+        with open('translations.json', 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"Error loading translations: {e}")
+        return {}
+
+translations = load_translations()
+
+def get_language():
+    """获取当前语言"""
+    # 从session获取，如果没有则从请求头获取，默认繁体中文
+    lang = session.get('language', request.headers.get('Accept-Language', 'zh-TW'))
+    # 简化语言代码处理
+    if lang.startswith('zh'):
+        if 'TW' in lang or 'HK' in lang or lang == 'zh-TW':
+            return 'zh-TW'
+        else:
+            return 'zh-CN'
+    elif lang.startswith('en'):
+        return 'en'
+    else:
+        return 'zh-TW'  # 默认繁体中文
+
+def t(key, lang=None):
+    """翻译函数"""
+    if lang is None:
+        lang = get_language()
+    
+    if lang in translations and key in translations[lang]:
+        return translations[lang][key]
+    elif 'en' in translations and key in translations['en']:
+        return translations['en'][key]  # 回退到英文
+    else:
+        return key  # 如果找不到翻译，返回key本身
 
 def is_valid_url(url):
     """验证URL是否有效"""
@@ -27,7 +73,7 @@ def is_valid_url(url):
         return False
 
 def extract_video_info(url):
-    """提取视频信息"""
+    """提取视频信息（包含预览信息）"""
     ydl_opts = {
         'quiet': True,
         'no_warnings': True,
@@ -37,9 +83,26 @@ def extract_video_info(url):
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
+            # 获取缩略图
+            thumbnail = info.get('thumbnail', '')
+            if not thumbnail and info.get('thumbnails'):
+                # 尝试获取最高质量的缩略图
+                thumbnails = info.get('thumbnails', [])
+                if thumbnails:
+                    # 优先选择最大尺寸的缩略图
+                    best_thumb = max(thumbnails, key=lambda x: x.get('width', 0) * x.get('height', 0), default={})
+                    thumbnail = best_thumb.get('url', '') or thumbnails[-1].get('url', '')
+            
             return {
                 'title': info.get('title', 'Unknown'),
                 'duration': info.get('duration', 0),
+                'thumbnail': thumbnail,
+                'description': info.get('description', ''),
+                'uploader': info.get('uploader', ''),
+                'uploader_id': info.get('uploader_id', ''),
+                'view_count': info.get('view_count', 0),
+                'upload_date': info.get('upload_date', ''),
+                'webpage_url': info.get('webpage_url', url),
                 'formats': []
             }
     except Exception as e:
@@ -329,14 +392,42 @@ def extract_video_from_html(url):
     except Exception as e:
         return None
 
-def download_video_direct(url, video_url, file_id):
+def update_status(task_id, status, message, progress=0, lang=None):
+    """更新下載狀態"""
+    if lang is None:
+        lang = get_language()
+    
+    # 如果message是翻译key，则翻译它
+    if message.startswith('status_'):
+        message = t(message, lang)
+    
+    with status_lock:
+        download_status[task_id] = {
+            'status': status,  # 'processing', 'downloading', 'completed', 'error'
+            'message': message,
+            'progress': progress,
+            'timestamp': time.time()
+        }
+
+def download_video_direct(url, video_url, file_id, task_id=None, lang=None):
     """直接下載視頻文件"""
+    if lang is None:
+        lang = get_language()
     try:
+        if task_id:
+            update_status(task_id, 'downloading', 'status_connecting', 10, lang)
+        
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         }
         response = requests.get(video_url, headers=headers, stream=True, timeout=30)
         response.raise_for_status()
+        
+        # 獲取文件大小
+        total_size = int(response.headers.get('content-length', 0))
+        
+        if task_id:
+            update_status(task_id, 'downloading', 'status_preparing', 20, lang)
         
         # 確定文件擴展名
         content_type = response.headers.get('content-type', '')
@@ -356,32 +447,62 @@ def download_video_direct(url, video_url, file_id):
         
         file_path = os.path.join(DOWNLOAD_DIR, f'{file_id}.{ext}')
         
+        downloaded_size = 0
         with open(file_path, 'wb') as f:
             for chunk in response.iter_content(chunk_size=8192):
                 if chunk:
                     f.write(chunk)
+                    downloaded_size += len(chunk)
+                    
+                    if task_id and total_size > 0:
+                        progress = 20 + int((downloaded_size / total_size) * 70)
+                        msg = f"{t('status_downloading', lang)} ({downloaded_size // 1024 // 1024}MB / {total_size // 1024 // 1024}MB)"
+                        update_status(task_id, 'downloading', msg, progress, lang)
+        
+        if task_id:
+            update_status(task_id, 'downloading', 'status_finalizing', 95, lang)
         
         return file_path if os.path.exists(file_path) else None
         
     except Exception as e:
+        if task_id:
+            update_status(task_id, 'error', f"{t('error_download_failed', lang)}: {str(e)}", 0, lang)
         return None
 
 @app.route('/')
 def index():
     """主页面"""
-    return render_template('index.html')
+    lang = get_language()
+    return render_template('index.html', lang=lang, translations=translations.get(lang, {}))
+
+@app.route('/api/language', methods=['GET', 'POST'])
+def set_language():
+    """设置语言API"""
+    if request.method == 'POST':
+        data = request.get_json()
+        lang = data.get('language', 'zh-TW')
+        if lang in ['zh-TW', 'zh-CN', 'en']:
+            session['language'] = lang
+            return jsonify({'success': True, 'language': lang})
+        else:
+            return jsonify({'error': 'Invalid language'}), 400
+    else:
+        # GET请求返回当前语言
+        lang = get_language()
+        return jsonify({'language': lang, 'translations': translations.get(lang, {})})
 
 @app.route('/api/extract', methods=['POST'])
 def extract():
     """提取视频信息API"""
     data = request.get_json()
     url = data.get('url', '').strip()
+    lang = get_language()
     
     if not url:
-        return jsonify({'error': 'URL不能为空'}), 400
+        return jsonify({'error': t('error_url_empty', lang)}), 400
     
     if not is_valid_url(url):
-        return jsonify({'error': '无效的URL格式'}), 400
+        return jsonify({'error': t('error_invalid_url', lang)}), 400
     
     try:
         # 首先嘗試使用 yt-dlp
@@ -392,6 +513,12 @@ def extract():
                 'success': True,
                 'title': info['title'],
                 'duration': info['duration'],
+                'thumbnail': info.get('thumbnail', ''),
+                'description': info.get('description', ''),
+                'uploader': info.get('uploader', ''),
+                'view_count': info.get('view_count', 0),
+                'upload_date': info.get('upload_date', ''),
+                'webpage_url': info.get('webpage_url', url),
                 'formats': formats[:10],  # 限制返回前10个格式
                 'method': 'yt-dlp'
             })
@@ -415,6 +542,12 @@ def extract():
                     'success': True,
                     'title': instagram_info['title'],
                     'duration': instagram_info['duration'],
+                    'thumbnail': '',
+                    'description': '',
+                    'uploader': '',
+                    'view_count': 0,
+                    'upload_date': '',
+                    'webpage_url': url,
                     'formats': formats,
                     'method': 'instagram_parse',
                     'video_urls': instagram_info['video_urls']
@@ -439,154 +572,221 @@ def extract():
                 'success': True,
                 'title': html_info['title'],
                 'duration': html_info['duration'],
+                'thumbnail': '',
+                'description': '',
+                'uploader': '',
+                'view_count': 0,
+                'upload_date': '',
+                'webpage_url': url,
                 'formats': formats,
                 'method': 'html_parse',
                 'video_urls': html_info['video_urls']
             })
         
-        return jsonify({'error': '无法提取视频信息，请检查URL是否有效或包含视频'}), 400
+        return jsonify({'error': t('error_extract_failed', lang)}), 400
         
     except Exception as e:
-        return jsonify({'error': f'提取失败: {str(e)}'}), 500
+        return jsonify({'error': f"{t('extract_failed', lang)}: {str(e)}"}), 500
+
+def download_video_async(task_id, url, format_id, video_url, method):
+    """異步下載視頻"""
+    file_id = str(uuid.uuid4())
+    lang = get_language()
+    try:
+        update_status(task_id, 'processing', 'status_obtaining', 5, lang)
+        
+        # 如果提供了直接的視頻URL（來自HTML解析），使用直接下載
+        if video_url:
+            update_status(task_id, 'processing', 'status_preparing', 10, lang)
+            downloaded_file = download_video_direct(url, video_url, file_id, task_id, lang)
+            if downloaded_file:
+                update_status(task_id, 'completed', 'status_completed', 100, lang)
+                with status_lock:
+                    download_status[task_id]['file_id'] = file_id
+                    download_status[task_id]['filename'] = os.path.basename(downloaded_file)
+                    download_status[task_id]['download_url'] = f'/api/file/{file_id}'
+                return
+            else:
+                update_status(task_id, 'error', 'error_direct_download_failed', 0, lang)
+                return
+        
+        # 嘗試使用 yt-dlp
+        update_status(task_id, 'processing', 'status_initializing', 15, lang)
+        try:
+            output_path = os.path.join(DOWNLOAD_DIR, f'{file_id}.%(ext)s')
+            
+            downloaded_file = None
+            
+            def progress_hook(d):
+                nonlocal downloaded_file
+                if d['status'] == 'downloading':
+                    # 更新下載進度
+                    if 'downloaded_bytes' in d and 'total_bytes' in d:
+                        progress = 15 + int((d['downloaded_bytes'] / d['total_bytes']) * 75)
+                        msg = f"{t('status_downloading', lang)} ({d['downloaded_bytes'] // 1024 // 1024}MB / {d['total_bytes'] // 1024 // 1024}MB)"
+                        update_status(task_id, 'downloading', msg, progress, lang)
+                    elif 'downloaded_bytes' in d and 'total_bytes_estimate' in d:
+                        progress = 15 + int((d['downloaded_bytes'] / d['total_bytes_estimate']) * 75)
+                        msg = f"{t('status_downloading', lang)} ({d['downloaded_bytes'] // 1024 // 1024}MB / {d['total_bytes_estimate'] // 1024 // 1024}MB estimated)"
+                        update_status(task_id, 'downloading', msg, progress, lang)
+                    elif '_percent_str' in d:
+                        percent_str = d['_percent_str'].replace('%', '').strip()
+                        try:
+                            percent = float(percent_str)
+                            progress = 15 + int(percent * 0.75)
+                            msg = f"{t('status_downloading', lang)} {percent_str}%"
+                            update_status(task_id, 'downloading', msg, progress, lang)
+                        except:
+                            update_status(task_id, 'downloading', 'status_downloading', 50, lang)
+                elif d['status'] == 'finished':
+                    downloaded_file = d.get('filename')
+                    update_status(task_id, 'downloading', 'status_finalizing', 95, lang)
+            
+            ydl_opts = {
+                'format': format_id,
+                'outtmpl': output_path,
+                'quiet': True,
+                'no_warnings': True,
+                'progress_hooks': [progress_hook],
+            }
+            
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                update_status(task_id, 'processing', 'status_extracting', 20, lang)
+                info = ydl.extract_info(url, download=True)
+                
+                # 如果progress_hook沒有捕獲，嘗試從info獲取
+                if not downloaded_file:
+                    downloaded_file = ydl.prepare_filename(info)
+                
+                # 確保文件存在
+                if downloaded_file and os.path.exists(downloaded_file):
+                    update_status(task_id, 'completed', 'status_completed', 100, lang)
+                    with status_lock:
+                        download_status[task_id]['file_id'] = file_id
+                        download_status[task_id]['filename'] = os.path.basename(downloaded_file)
+                        download_status[task_id]['download_url'] = f'/api/file/{file_id}'
+                    return
+                else:
+                    # 嘗試查找匹配的文件
+                    for filename in os.listdir(DOWNLOAD_DIR):
+                        if filename.startswith(file_id):
+                            update_status(task_id, 'completed', 'status_completed', 100, lang)
+                            with status_lock:
+                                download_status[task_id]['file_id'] = file_id
+                                download_status[task_id]['filename'] = filename
+                                download_status[task_id]['download_url'] = f'/api/file/{file_id}'
+                            return
+                    # yt-dlp 失敗，嘗試備用方案
+                    raise Exception('yt-dlp download failed')
+                    
+        except Exception as e:
+            # yt-dlp 失敗，使用備用方案
+            update_status(task_id, 'processing', 'status_alternative', 30, lang)
+            try:
+                # 如果是 Instagram，使用專門的提取方法
+                if 'instagram.com' in url.lower():
+                    update_status(task_id, 'processing', 'status_instagram', 35, lang)
+                    instagram_info = extract_instagram_video(url)
+                    if instagram_info and instagram_info['video_urls']:
+                        video_url_to_download = instagram_info['video_urls'][0]['url']
+                        downloaded_file = download_video_direct(url, video_url_to_download, file_id, task_id, lang)
+                        if downloaded_file:
+                            update_status(task_id, 'completed', 'status_completed', 100, lang)
+                            with status_lock:
+                                download_status[task_id]['file_id'] = file_id
+                                download_status[task_id]['filename'] = os.path.basename(downloaded_file)
+                                download_status[task_id]['download_url'] = f'/api/file/{file_id}'
+                            return
+                
+                # 使用通用 HTML 解析
+                update_status(task_id, 'processing', 'status_parsing', 40, lang)
+                html_info = extract_video_from_html(url)
+                if html_info and html_info['video_urls']:
+                    # 選擇第一個可用的視頻URL
+                    video_url_to_download = html_info['video_urls'][0]['url']
+                    
+                    # 如果是 YouTube 或 Vimeo URL，再次嘗試 yt-dlp
+                    if 'youtube.com' in video_url_to_download or 'youtu.be' in video_url_to_download or 'vimeo.com' in video_url_to_download:
+                        update_status(task_id, 'processing', 'status_retrying', 45, lang)
+                        try:
+                            output_path = os.path.join(DOWNLOAD_DIR, f'{file_id}.%(ext)s')
+                            ydl_opts = {
+                                'format': format_id,
+                                'outtmpl': output_path,
+                                'quiet': True,
+                                'no_warnings': True,
+                            }
+                            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                                info = ydl.extract_info(video_url_to_download, download=True)
+                                downloaded_file = ydl.prepare_filename(info)
+                                if downloaded_file and os.path.exists(downloaded_file):
+                                    update_status(task_id, 'completed', 'status_completed', 100, lang)
+                                    with status_lock:
+                                        download_status[task_id]['file_id'] = file_id
+                                        download_status[task_id]['filename'] = os.path.basename(downloaded_file)
+                                        download_status[task_id]['download_url'] = f'/api/file/{file_id}'
+                                    return
+                        except:
+                            pass
+                    
+                    # 直接下載視頻文件
+                    downloaded_file = download_video_direct(url, video_url_to_download, file_id, task_id, lang)
+                    if downloaded_file:
+                        update_status(task_id, 'completed', 'status_completed', 100, lang)
+                        with status_lock:
+                            download_status[task_id]['file_id'] = file_id
+                            download_status[task_id]['filename'] = os.path.basename(downloaded_file)
+                            download_status[task_id]['download_url'] = f'/api/file/{file_id}'
+                        return
+                
+                update_status(task_id, 'error', 'error_extract_or_download', 0, lang)
+                
+            except Exception as e2:
+                update_status(task_id, 'error', f"{t('error_download_failed', lang)}: {str(e2)}", 0, lang)
+    except Exception as e:
+        update_status(task_id, 'error', f"{t('error_download_failed', lang)}: {str(e)}", 0, lang)
 
 @app.route('/api/download', methods=['POST'])
 def download():
-    """下载视频API"""
+    """下载视频API - 启动异步下载任务"""
     data = request.get_json()
     url = data.get('url', '').strip()
     format_id = data.get('format_id', 'best')
-    video_url = data.get('video_url', None)  # 用於HTML解析方式
+    video_url = data.get('video_url', None)
+    method = data.get('method', 'yt-dlp')
+    
+    lang = get_language()
     
     if not url:
-        return jsonify({'error': 'URL不能为空'}), 400
+        return jsonify({'error': t('error_url_empty', lang)}), 400
     
     if not is_valid_url(url):
-        return jsonify({'error': '无效的URL格式'}), 400
+        return jsonify({'error': t('error_invalid_url', lang)}), 400
     
-    # 如果提供了直接的視頻URL（來自HTML解析），使用直接下載
-    if video_url:
-        try:
-            file_id = str(uuid.uuid4())
-            downloaded_file = download_video_direct(url, video_url, file_id)
-            if downloaded_file:
-                return jsonify({
-                    'success': True,
-                    'download_url': f'/api/file/{file_id}',
-                    'filename': os.path.basename(downloaded_file)
-                })
-            else:
-                return jsonify({'error': '直接下載失敗'}), 500
-        except Exception as e:
-            return jsonify({'error': f'下載失敗: {str(e)}'}), 500
+    # 生成任务ID
+    task_id = str(uuid.uuid4())
+    update_status(task_id, 'processing', 'status_starting', 0, lang)
     
-    # 嘗試使用 yt-dlp
-    try:
-        # 生成唯一文件名
-        file_id = str(uuid.uuid4())
-        output_path = os.path.join(DOWNLOAD_DIR, f'{file_id}.%(ext)s')
-        
-        ydl_opts = {
-            'format': format_id,
-            'outtmpl': output_path,
-            'quiet': True,
-            'no_warnings': True,
-        }
-        
-        downloaded_file = None
-        
-        def progress_hook(d):
-            nonlocal downloaded_file
-            if d['status'] == 'finished':
-                downloaded_file = d.get('filename')
-        
-        ydl_opts['progress_hooks'] = [progress_hook]
-        
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            
-            # 如果progress_hook沒有捕獲，嘗試從info獲取
-            if not downloaded_file:
-                downloaded_file = ydl.prepare_filename(info)
-            
-            # 確保文件存在
-            if downloaded_file and os.path.exists(downloaded_file):
-                return jsonify({
-                    'success': True,
-                    'download_url': f'/api/file/{file_id}',
-                    'filename': os.path.basename(downloaded_file)
-                })
-            else:
-                # 嘗試查找匹配的文件
-                for filename in os.listdir(DOWNLOAD_DIR):
-                    if filename.startswith(file_id):
-                        file_path = os.path.join(DOWNLOAD_DIR, filename)
-                        return jsonify({
-                            'success': True,
-                            'download_url': f'/api/file/{file_id}',
-                            'filename': filename
-                        })
-                # yt-dlp 失敗，嘗試備用方案
-                raise Exception('yt-dlp download failed')
-                
-    except Exception as e:
-        # yt-dlp 失敗，使用備用方案
-        try:
-            # 如果是 Instagram，使用專門的提取方法
-            if 'instagram.com' in url.lower():
-                instagram_info = extract_instagram_video(url)
-                if instagram_info and instagram_info['video_urls']:
-                    file_id = str(uuid.uuid4())
-                    video_url_to_download = instagram_info['video_urls'][0]['url']
-                    downloaded_file = download_video_direct(url, video_url_to_download, file_id)
-                    if downloaded_file:
-                        return jsonify({
-                            'success': True,
-                            'download_url': f'/api/file/{file_id}',
-                            'filename': os.path.basename(downloaded_file)
-                        })
-            
-            # 使用通用 HTML 解析
-            html_info = extract_video_from_html(url)
-            if html_info and html_info['video_urls']:
-                file_id = str(uuid.uuid4())
-                # 選擇第一個可用的視頻URL
-                video_url_to_download = html_info['video_urls'][0]['url']
-                
-                # 如果是 YouTube 或 Vimeo URL，再次嘗試 yt-dlp
-                if 'youtube.com' in video_url_to_download or 'youtu.be' in video_url_to_download or 'vimeo.com' in video_url_to_download:
-                    try:
-                        output_path = os.path.join(DOWNLOAD_DIR, f'{file_id}.%(ext)s')
-                        ydl_opts = {
-                            'format': format_id,
-                            'outtmpl': output_path,
-                            'quiet': True,
-                            'no_warnings': True,
-                        }
-                        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                            info = ydl.extract_info(video_url_to_download, download=True)
-                            downloaded_file = ydl.prepare_filename(info)
-                            if downloaded_file and os.path.exists(downloaded_file):
-                                return jsonify({
-                                    'success': True,
-                                    'download_url': f'/api/file/{file_id}',
-                                    'filename': os.path.basename(downloaded_file)
-                                })
-                    except:
-                        pass
-                
-                # 直接下載視頻文件
-                downloaded_file = download_video_direct(url, video_url_to_download, file_id)
-                if downloaded_file:
-                    return jsonify({
-                        'success': True,
-                        'download_url': f'/api/file/{file_id}',
-                        'filename': os.path.basename(downloaded_file)
-                    })
-            
-            return jsonify({'error': f'下載失敗: 無法從頁面提取視頻或下載視頻文件'}), 500
-            
-        except Exception as e2:
-            return jsonify({'error': f'下載失敗: {str(e2)}'}), 500
+    # 启动异步下载任务
+    thread = threading.Thread(target=download_video_async, args=(task_id, url, format_id, video_url, method))
+    thread.daemon = True
+    thread.start()
+    
+    return jsonify({
+        'success': True,
+        'task_id': task_id
+    })
+
+@app.route('/api/status/<task_id>', methods=['GET'])
+def get_status(task_id):
+    """获取下载状态API"""
+    lang = get_language()
+    with status_lock:
+        if task_id in download_status:
+            status = download_status[task_id].copy()
+            return jsonify(status)
+        else:
+            return jsonify({'error': t('error_task_not_found', lang)}), 404
 
 @app.route('/api/file/<file_id>')
 def serve_file(file_id):
@@ -602,7 +802,8 @@ def serve_file(file_id):
                     download_name=filename
                 )
     
-    return jsonify({'error': '文件未找到'}), 404
+    lang = get_language()
+    return jsonify({'error': t('error_file_not_found', lang)}), 404
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
