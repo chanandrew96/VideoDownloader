@@ -25,29 +25,50 @@ os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 download_status = {}
 status_lock = threading.Lock()
 
-# 加载翻译文件
-def load_translations():
-    """加载翻译文件"""
+# 导入翻译数据（直接嵌入代码，不依赖外部文件）
+try:
+    from translations import TRANSLATIONS
+    translations = TRANSLATIONS
+except ImportError:
+    # 如果导入失败，尝试从JSON文件加载（向后兼容）
     try:
-        with open('translations.json', 'r', encoding='utf-8') as f:
-            return json.load(f)
+        import os
+        translations_path = os.path.join(os.path.dirname(__file__), 'translations.json')
+        with open(translations_path, 'r', encoding='utf-8') as f:
+            translations = json.load(f)
     except Exception as e:
         print(f"Error loading translations: {e}")
-        return {}
-
-translations = load_translations()
+        # 提供默认的英文翻译作为后备
+        translations = {
+            'en': {
+                'app_title': 'Video Downloader',
+                'subtitle': 'Enter URL, download videos easily',
+                'error_url_empty': 'URL cannot be empty',
+                'error_invalid_url': 'Invalid URL format',
+            },
+            'zh-TW': {},
+            'zh-CN': {}
+        }
 
 def get_language():
     """获取当前语言"""
-    # 从session获取，如果没有则从请求头获取，默认繁体中文
-    lang = session.get('language', request.headers.get('Accept-Language', 'zh-TW'))
+    try:
+        # 从session获取，如果没有则从请求头获取，默认繁体中文
+        from flask import has_request_context
+        if has_request_context():
+            lang = session.get('language', request.headers.get('Accept-Language', 'zh-TW'))
+        else:
+            lang = 'zh-TW'  # 默认繁体中文（在请求上下文外）
+    except:
+        lang = 'zh-TW'  # 默认繁体中文
+    
     # 简化语言代码处理
-    if lang.startswith('zh'):
+    if isinstance(lang, str) and lang.startswith('zh'):
         if 'TW' in lang or 'HK' in lang or lang == 'zh-TW':
             return 'zh-TW'
         else:
             return 'zh-CN'
-    elif lang.startswith('en'):
+    elif isinstance(lang, str) and lang.startswith('en'):
         return 'en'
     else:
         return 'zh-TW'  # 默认繁体中文
