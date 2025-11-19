@@ -797,20 +797,18 @@ def download_video_async(task_id, url, format_id, video_url, method):
                         update_status(task_id, 'processing', 'status_retrying', 45, lang)
                         try:
                             output_path = os.path.join(DOWNLOAD_DIR, f'{file_id}.%(ext)s')
-                        ydl_opts = {
-                            'format': format_id,
-                        ydl_opts = {
-                            'format': format_id,
-                            'outtmpl': output_path,
-                            'quiet': True,
-                            'no_warnings': True,
-                            'noplaylist': True,
-                            'merge_output_format': MERGE_OUTPUT_FORMAT,
-                            'postprocessors': [{
-                                'key': 'FFmpegVideoConvertor',
-                                'preferedformat': MERGE_OUTPUT_FORMAT
-                            }]
-                        }
+                            ydl_opts = {
+                                'format': format_id,
+                                'outtmpl': output_path,
+                                'quiet': True,
+                                'no_warnings': True,
+                                'noplaylist': True,
+                                'merge_output_format': MERGE_OUTPUT_FORMAT,
+                                'postprocessors': [{
+                                    'key': 'FFmpegVideoConvertor',
+                                    'preferedformat': MERGE_OUTPUT_FORMAT
+                                }]
+                            }
                             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                                 info = ydl.extract_info(video_url_to_download, download=True)
                                 downloaded_file = ydl.prepare_filename(info)
@@ -819,7 +817,7 @@ def download_video_async(task_id, url, format_id, video_url, method):
                                     filename = os.path.basename(downloaded_file)
                                     update_status(task_id, 'completed', 'status_completed', 100, lang, file_id, filename, download_url)
                                     return
-                        except:
+                        except Exception:
                             pass
                     
                     # 直接下載視頻文件
