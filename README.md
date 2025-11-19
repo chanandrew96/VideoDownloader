@@ -14,6 +14,7 @@
 - 🎯 **影片預覽**：下載前可預覽影片資訊、縮略圖、描述等
 - 📊 **下載進度顯示**：實時顯示下載進度和狀態訊息
 - 🎚️ **格式/解析度選擇**：可自選影片格式與解析度進行下載
+- 🧰 **PyTube 備援**：yt-dlp 失敗時，對 YouTube 影片自動嘗試 PyTube
 - 🔌 **RESTful API**：完整的 API 接口，可被其他服務調用
 - 🔔 **Webhook 回調**：支持下載完成後自動回調通知
 - 🔐 **API 認證**：可選的 API 密鑰認證機制
@@ -32,13 +33,14 @@
 應用程式採用雙重策略來提取和下載影片：
 
 1. **主要方式（yt-dlp）**：首先嘗試使用 yt-dlp 提取影片，支援 YouTube、Vimeo、Twitter 等主流平台
-2. **Instagram 專門處理**：當檢測到 Instagram URL 時，使用專門的解析方法：
+2. **PyTube 備援**：若 yt-dlp 在 YouTube 上失敗，會改用 PyTube 直接抓取 mp4
+3. **Instagram 專門處理**：當檢測到 Instagram URL 時，使用專門的解析方法：
    - 解析 `window._sharedData` 中的 JSON 數據
    - 提取 `video_url` 和 `video_versions` 中的影片連結
    - 從 meta 標籤中提取 og:video 內容
    - 使用正則表達式查找 Instagram CDN 的影片 URL
 
-3. **備用方式（HTML 解析）**：當 yt-dlp 無法處理時，自動切換到 HTML 解析模式，透過以下方法提取影片：
+4. **備用方式（HTML 解析）**：當 yt-dlp / PyTube 都無法處理時，自動切換到 HTML 解析模式，透過以下方法提取影片：
    - 解析 `<video>` 標籤和 `<source>` 標籤
    - 提取 JSON-LD 結構化數據中的影片資訊
    - 使用正則表達式查找常見的影片 URL 模式

@@ -4,4 +4,5 @@ yt-dlp==2025.11.12
 gunicorn==21.2.0
 requests==2.31.0
 beautifulsoup4==4.12.2
+pytube==15.0.0
 

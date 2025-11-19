@@ -13,6 +13,8 @@ import threading
 import time
 from functools import wraps
 from datetime import datetime
+from pytube import YouTube
+import subprocess
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)  # For session management
@@ -657,6 +659,50 @@ def download_video_direct(url, video_url, file_id, task_id=None, lang=None):
             update_status(task_id, 'error', f"{t('error_download_failed', lang)}: {str(e)}", 0, lang)
         return None
 
+def download_video_with_pytube(url, file_id):
+    """使用 PyTube 下載 YouTube 視頻"""
+    try:
+        yt = YouTube(url)
+        stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
+        if not stream:
+            stream = yt.streams.filter(file_extension='mp4').order_by('resolution').desc().first()
+        if not stream:
+            return None
+        filename = f'{file_id}.mp4'
+        stream.download(output_path=DOWNLOAD_DIR, filename=filename)
+        file_path = os.path.join(DOWNLOAD_DIR, filename)
+        return file_path if os.path.exists(file_path) else None
+    except Exception:
+        return None
+
+def run_yt_dlp_subprocess(target_url, format_id, file_id, cookie_file=None):
+    """使用子程序呼叫 yt-dlp，作為備援方案"""
+    output_pattern = os.path.join(DOWNLOAD_DIR, f'{file_id}.%(ext)s')
+    cmd = [
+        'yt-dlp',
+        '--format', format_id,
+        '--no-playlist',
+        '--quiet',
+        '--no-warnings',
+        '--merge-output-format', MERGE_OUTPUT_FORMAT,
+        '--output', output_pattern,
+        target_url
+    ]
+    if cookie_file:
+        cmd.extend(['--cookies', cookie_file])
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        if result.returncode != 0:
+            print(f"yt-dlp subprocess failed: {result.stderr.strip()}")
+            return None
+        for filename in os.listdir(DOWNLOAD_DIR):
+            if filename.startswith(file_id):
+                return os.path.join(DOWNLOAD_DIR, filename)
+    except Exception as e:
+        print(f"yt-dlp subprocess error: {e}")
+    return None
+
 @app.route('/')
 def index():
     """主页面"""
@@ -897,6 +943,23 @@ def download_video_async(task_id, url, format_id, video_url, method, user_cookie
             # yt-dlp 失敗，使用備用方案
             update_status(task_id, 'processing', 'status_alternative', 30, lang)
             try:
+                subprocess_file = run_yt_dlp_subprocess(url, format_id, file_id, cookie_file)
+                if subprocess_file:
+                    download_url = f'/api/file/{file_id}'
+                    filename = os.path.basename(subprocess_file)
+                    update_status(task_id, 'completed', 'status_completed', 100, lang, file_id, filename, download_url)
+                    return
+
+                # 如果是 YouTube，嘗試使用 PyTube
+                if 'youtube.com' in url.lower() or 'youtu.be' in url.lower():
+                    update_status(task_id, 'processing', 'status_pytube', 35, lang)
+                    pytube_file = download_video_with_pytube(url, file_id)
+                    if pytube_file:
+                        download_url = f'/api/file/{file_id}'
+                        filename = os.path.basename(pytube_file)
+                        update_status(task_id, 'completed', 'status_completed', 100, lang, file_id, filename, download_url)
+                        return
+                
                 # 如果是 Instagram，使用專門的提取方法
                 if 'instagram.com' in url.lower():
                     update_status(task_id, 'processing', 'status_instagram', 35, lang)
@@ -920,32 +983,12 @@ def download_video_async(task_id, url, format_id, video_url, method, user_cookie
                     # 如果是 YouTube 或 Vimeo URL，再次嘗試 yt-dlp
                     if 'youtube.com' in video_url_to_download or 'youtu.be' in video_url_to_download or 'vimeo.com' in video_url_to_download:
                         update_status(task_id, 'processing', 'status_retrying', 45, lang)
-                        try:
-                            output_path = os.path.join(DOWNLOAD_DIR, f'{file_id}.%(ext)s')
-                            ydl_opts = {
-                                'format': format_id,
-                                'outtmpl': output_path,
-                                'quiet': True,
-                                'no_warnings': True,
-                                'noplaylist': True,
-                                'merge_output_format': MERGE_OUTPUT_FORMAT,
-                                'postprocessors': [{
-                                    'key': 'FFmpegVideoConvertor',
-                                    'preferedformat': MERGE_OUTPUT_FORMAT
-                                }]
-                            }
-                            if cookie_file:
-                                ydl_opts['cookiefile'] = cookie_file
-                            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                                info = ydl.extract_info(video_url_to_download, download=True)
-                                downloaded_file = ydl.prepare_filename(info)
-                                if downloaded_file and os.path.exists(downloaded_file):
-                                    download_url = f'/api/file/{file_id}'
-                                    filename = os.path.basename(downloaded_file)
-                                    update_status(task_id, 'completed', 'status_completed', 100, lang, file_id, filename, download_url)
-                                    return
-                        except Exception:
-                            pass
+                        subprocess_file = run_yt_dlp_subprocess(video_url_to_download, format_id, file_id, cookie_file)
+                        if subprocess_file:
+                            download_url = f'/api/file/{file_id}'
+                            filename = os.path.basename(subprocess_file)
+                            update_status(task_id, 'completed', 'status_completed', 100, lang, file_id, filename, download_url)
+                            return
                     
                     # 直接下載視頻文件
                     downloaded_file = download_video_direct(url, video_url_to_download, file_id, task_id, lang)
