@@ -552,7 +552,7 @@ def download_video_direct(url, video_url, file_id, task_id=None, lang=None):
 def index():
     """主页面"""
     lang = get_language()
-    return render_template('index.html', lang=lang, translations=translations.get(lang, {}))
+    return render_template('index.html', lang=lang, translations_data=translations)
 
 @app.route('/api/language', methods=['GET', 'POST'])
 def set_language():

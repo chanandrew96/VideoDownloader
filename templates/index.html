@@ -487,7 +487,7 @@
 
     <script>
         // 翻译数据
-        let translations = {{ translations|tojson }};
+        let translations = {{ translations_data|tojson }};
         let currentLanguage = '{{ lang }}';
         
         // 初始化语言选择器
@@ -619,6 +619,15 @@
             const successDiv = document.getElementById('success');
             successDiv.textContent = message;
             successDiv.classList.add('show');
+        }
+
+        function clearMessages() {
+            const successDiv = document.getElementById('success');
+            const errorDiv = document.getElementById('error');
+            successDiv.classList.remove('show');
+            successDiv.textContent = '';
+            errorDiv.classList.remove('show');
+            errorDiv.textContent = '';
         }
 
         function formatDuration(seconds) {
@@ -808,6 +817,7 @@
 
         async function extractVideo() {
             const url = document.getElementById('videoUrl').value.trim();
+            clearMessages();
             
             if (!url) {
                 showError(t('enter_video_url'));
@@ -892,6 +902,8 @@
         }
 
         async function downloadVideo() {
+            clearMessages();
+
             if (!currentUrl) {
                 showError(t('search_first'));
                 return;
