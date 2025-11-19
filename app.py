@@ -35,6 +35,13 @@ status_lock = threading.Lock()
 webhook_callbacks = {}
 webhook_lock = threading.Lock()
 
+# Cookie configuration
+COOKIES_FILE = os.environ.get('YTDLP_COOKIES_FILE')
+COOKIES_CONTENT = os.environ.get('YTDLP_COOKIES')
+COOKIE_TEMP_FILE = None
+SESSION_COOKIE_DIR = os.path.join(DOWNLOAD_DIR, 'session_cookies')
+os.makedirs(SESSION_COOKIE_DIR, exist_ok=True)
+
 # Prepare cookies temp file if raw content provided
 if COOKIES_CONTENT and not COOKIES_FILE:
     try:
@@ -49,13 +56,6 @@ if COOKIES_CONTENT and not COOKIES_FILE:
 PREFERRED_DEFAULT_FORMAT = 'bv*+ba/bestvideo+bestaudio/best'
 MERGE_OUTPUT_FORMAT = 'mp4'
 ALLOWED_VIDEO_EXTENSIONS = ('.mp4', '.m4v', '.mov', '.webm', '.mkv', '.flv', '.avi')
-
-# Cookie configuration
-COOKIES_FILE = os.environ.get('YTDLP_COOKIES_FILE')
-COOKIES_CONTENT = os.environ.get('YTDLP_COOKIES')
-COOKIE_TEMP_FILE = None
-SESSION_COOKIE_DIR = os.path.join(DOWNLOAD_DIR, 'session_cookies')
-os.makedirs(SESSION_COOKIE_DIR, exist_ok=True)
 
 # 导入翻译数据（直接嵌入代码，不依赖外部文件）
 try:
