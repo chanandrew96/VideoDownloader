@@ -10,6 +10,12 @@
 - 🎨 現代化的使用者介面
 - ☁️ 支援雲端部署（Render）
 - 🔄 **智能備用方案**：當 yt-dlp 不支援時，自動使用 HTML 解析方式提取影片
+- 📱 **多語言支援**：繁體中文、簡體中文、英文
+- 🎯 **影片預覽**：下載前可預覽影片資訊、縮略圖、描述等
+- 📊 **下載進度顯示**：實時顯示下載進度和狀態訊息
+- 🔌 **RESTful API**：完整的 API 接口，可被其他服務調用
+- 🔔 **Webhook 回調**：支持下載完成後自動回調通知
+- 🔐 **API 認證**：可選的 API 密鑰認證機制
 
 ## 技術棧
 
@@ -160,11 +166,43 @@ python app.py
 
 ## 使用說明
 
+### 網頁介面使用
+
 1. 在輸入框中貼上影片網址
 2. 點擊「搜尋影片」按鈕
-3. 查看影片資訊（標題、時長等）
+3. 查看影片預覽資訊（標題、縮略圖、描述等）
    - 如果使用備用方案，會顯示「(使用HTML解析)」提示
 4. 點擊「下載影片」按鈕開始下載
+5. 查看下載進度條和狀態訊息
+
+### API 使用
+
+本應用程式提供完整的 RESTful API，可被其他服務或應用程式調用。
+
+**API 文檔**: 請查看 [API.md](API.md) 獲取詳細的 API 文檔
+
+**快速開始**:
+```bash
+# 獲取 API 信息
+curl https://your-domain.com/api/v1/info
+
+# 提取影片信息
+curl -X POST https://your-domain.com/api/v1/extract \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://www.youtube.com/watch?v=..."}'
+
+# 下載影片（支持 webhook 回調）
+curl -X POST https://your-domain.com/api/v1/download \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://www.youtube.com/watch?v=...",
+    "webhook_url": "https://your-service.com/webhook"
+  }'
+```
+
+**API 認證**（可選）:
+- 設置環境變數 `API_KEY` 以啟用 API 認證
+- 使用 `X-API-Key` header 或 `api_key` query parameter 進行認證
 
 ### 支援的網站類型
 

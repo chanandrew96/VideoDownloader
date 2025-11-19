@@ -11,10 +11,16 @@ from bs4 import BeautifulSoup
 import json
 import threading
 import time
+from functools import wraps
+from datetime import datetime
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)  # For session management
 CORS(app)
+
+# API Configuration
+API_KEY = os.environ.get('API_KEY', None)  # Optional API key for authentication
+API_VERSION = 'v1'
 
 # 配置临时文件目录
 TEMP_DIR = tempfile.gettempdir()
@@ -24,6 +30,10 @@ os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 # 下载状态存储
 download_status = {}
 status_lock = threading.Lock()
+
+# Webhook callbacks storage
+webhook_callbacks = {}
+webhook_lock = threading.Lock()
 
 # 导入翻译数据（直接嵌入代码，不依赖外部文件）
 try:
@@ -84,6 +94,42 @@ def t(key, lang=None):
         return translations['en'][key]  # 回退到英文
     else:
         return key  # 如果找不到翻译，返回key本身
+
+def require_api_key(f):
+    """API认证装饰器（如果设置了API_KEY）"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if API_KEY:
+            provided_key = request.headers.get('X-API-Key') or request.args.get('api_key')
+            if not provided_key or provided_key != API_KEY:
+                return jsonify({
+                    'success': False,
+                    'error': 'Invalid or missing API key'
+                }), 401
+        return f(*args, **kwargs)
+    return decorated_function
+
+def send_webhook_callback(task_id, status_data):
+    """发送webhook回调"""
+    with webhook_lock:
+        if task_id in webhook_callbacks:
+            webhook_url = webhook_callbacks[task_id]
+            try:
+                requests.post(
+                    webhook_url,
+                    json={
+                        'task_id': task_id,
+                        'status': status_data.get('status'),
+                        'message': status_data.get('message'),
+                        'progress': status_data.get('progress'),
+                        'download_url': status_data.get('download_url'),
+                        'filename': status_data.get('filename'),
+                        'timestamp': datetime.utcnow().isoformat()
+                    },
+                    timeout=5
+                )
+            except Exception as e:
+                print(f"Webhook callback failed: {e}")
 
 def is_valid_url(url):
     """验证URL是否有效"""
@@ -413,7 +459,7 @@ def extract_video_from_html(url):
     except Exception as e:
         return None
 
-def update_status(task_id, status, message, progress=0, lang=None):
+def update_status(task_id, status, message, progress=0, lang=None, file_id=None, filename=None, download_url=None):
     """更新下載狀態"""
     if lang is None:
         lang = get_language()
@@ -429,6 +475,16 @@ def update_status(task_id, status, message, progress=0, lang=None):
             'progress': progress,
             'timestamp': time.time()
         }
+        if file_id:
+            download_status[task_id]['file_id'] = file_id
+        if filename:
+            download_status[task_id]['filename'] = filename
+        if download_url:
+            download_status[task_id]['download_url'] = download_url
+        
+        # 如果状态是 completed 或 error，发送 webhook 回调
+        if status in ['completed', 'error']:
+            send_webhook_callback(task_id, download_status[task_id])
 
 def download_video_direct(url, video_url, file_id, task_id=None, lang=None):
     """直接下載視頻文件"""
@@ -621,11 +677,9 @@ def download_video_async(task_id, url, format_id, video_url, method):
             update_status(task_id, 'processing', 'status_preparing', 10, lang)
             downloaded_file = download_video_direct(url, video_url, file_id, task_id, lang)
             if downloaded_file:
-                update_status(task_id, 'completed', 'status_completed', 100, lang)
-                with status_lock:
-                    download_status[task_id]['file_id'] = file_id
-                    download_status[task_id]['filename'] = os.path.basename(downloaded_file)
-                    download_status[task_id]['download_url'] = f'/api/file/{file_id}'
+                download_url = f'/api/file/{file_id}'
+                filename = os.path.basename(downloaded_file)
+                update_status(task_id, 'completed', 'status_completed', 100, lang, file_id, filename, download_url)
                 return
             else:
                 update_status(task_id, 'error', 'error_direct_download_failed', 0, lang)
@@ -681,21 +735,16 @@ def download_video_async(task_id, url, format_id, video_url, method):
                 
                 # 確保文件存在
                 if downloaded_file and os.path.exists(downloaded_file):
-                    update_status(task_id, 'completed', 'status_completed', 100, lang)
-                    with status_lock:
-                        download_status[task_id]['file_id'] = file_id
-                        download_status[task_id]['filename'] = os.path.basename(downloaded_file)
-                        download_status[task_id]['download_url'] = f'/api/file/{file_id}'
+                    download_url = f'/api/file/{file_id}'
+                    filename = os.path.basename(downloaded_file)
+                    update_status(task_id, 'completed', 'status_completed', 100, lang, file_id, filename, download_url)
                     return
                 else:
                     # 嘗試查找匹配的文件
                     for filename in os.listdir(DOWNLOAD_DIR):
                         if filename.startswith(file_id):
-                            update_status(task_id, 'completed', 'status_completed', 100, lang)
-                            with status_lock:
-                                download_status[task_id]['file_id'] = file_id
-                                download_status[task_id]['filename'] = filename
-                                download_status[task_id]['download_url'] = f'/api/file/{file_id}'
+                            download_url = f'/api/file/{file_id}'
+                            update_status(task_id, 'completed', 'status_completed', 100, lang, file_id, filename, download_url)
                             return
                     # yt-dlp 失敗，嘗試備用方案
                     raise Exception('yt-dlp download failed')
@@ -712,11 +761,9 @@ def download_video_async(task_id, url, format_id, video_url, method):
                         video_url_to_download = instagram_info['video_urls'][0]['url']
                         downloaded_file = download_video_direct(url, video_url_to_download, file_id, task_id, lang)
                         if downloaded_file:
-                            update_status(task_id, 'completed', 'status_completed', 100, lang)
-                            with status_lock:
-                                download_status[task_id]['file_id'] = file_id
-                                download_status[task_id]['filename'] = os.path.basename(downloaded_file)
-                                download_status[task_id]['download_url'] = f'/api/file/{file_id}'
+                            download_url = f'/api/file/{file_id}'
+                            filename = os.path.basename(downloaded_file)
+                            update_status(task_id, 'completed', 'status_completed', 100, lang, file_id, filename, download_url)
                             return
                 
                 # 使用通用 HTML 解析
@@ -741,11 +788,9 @@ def download_video_async(task_id, url, format_id, video_url, method):
                                 info = ydl.extract_info(video_url_to_download, download=True)
                                 downloaded_file = ydl.prepare_filename(info)
                                 if downloaded_file and os.path.exists(downloaded_file):
-                                    update_status(task_id, 'completed', 'status_completed', 100, lang)
-                                    with status_lock:
-                                        download_status[task_id]['file_id'] = file_id
-                                        download_status[task_id]['filename'] = os.path.basename(downloaded_file)
-                                        download_status[task_id]['download_url'] = f'/api/file/{file_id}'
+                                    download_url = f'/api/file/{file_id}'
+                                    filename = os.path.basename(downloaded_file)
+                                    update_status(task_id, 'completed', 'status_completed', 100, lang, file_id, filename, download_url)
                                     return
                         except:
                             pass
@@ -753,11 +798,9 @@ def download_video_async(task_id, url, format_id, video_url, method):
                     # 直接下載視頻文件
                     downloaded_file = download_video_direct(url, video_url_to_download, file_id, task_id, lang)
                     if downloaded_file:
-                        update_status(task_id, 'completed', 'status_completed', 100, lang)
-                        with status_lock:
-                            download_status[task_id]['file_id'] = file_id
-                            download_status[task_id]['filename'] = os.path.basename(downloaded_file)
-                            download_status[task_id]['download_url'] = f'/api/file/{file_id}'
+                        download_url = f'/api/file/{file_id}'
+                        filename = os.path.basename(downloaded_file)
+                        update_status(task_id, 'completed', 'status_completed', 100, lang, file_id, filename, download_url)
                         return
                 
                 update_status(task_id, 'error', 'error_extract_or_download', 0, lang)
@@ -825,6 +868,314 @@ def serve_file(file_id):
     
     lang = get_language()
     return jsonify({'error': t('error_file_not_found', lang)}), 404
+
+# ==================== API v1 Endpoints for External Services ====================
+
+@app.route(f'/api/{API_VERSION}/info', methods=['GET'])
+@require_api_key
+def api_info():
+    """API信息端点"""
+    base_url = request.url_root.rstrip('/')
+    return jsonify({
+        'success': True,
+        'api_version': API_VERSION,
+        'endpoints': {
+            'extract': f'{base_url}/api/{API_VERSION}/extract',
+            'download': f'{base_url}/api/{API_VERSION}/download',
+            'status': f'{base_url}/api/{API_VERSION}/status/<task_id>',
+            'file': f'{base_url}/api/{API_VERSION}/file/<file_id>'
+        },
+        'authentication': 'X-API-Key header or api_key query parameter' if API_KEY else 'Not required'
+    })
+
+@app.route(f'/api/{API_VERSION}/extract', methods=['POST'])
+@require_api_key
+def api_extract():
+    """提取视频信息API（供外部服务调用）"""
+    data = request.get_json() or {}
+    url = data.get('url', '').strip()
+    lang = data.get('language', 'en')  # API默认使用英文
+    
+    if not url:
+        return jsonify({
+            'success': False,
+            'error': 'URL is required'
+        }), 400
+    
+    if not is_valid_url(url):
+        return jsonify({
+            'success': False,
+            'error': 'Invalid URL format'
+        }), 400
+    
+    try:
+        # 首先嘗試使用 yt-dlp
+        info = extract_video_info(url)
+        if info is not None:
+            formats = get_video_formats(url)
+            return jsonify({
+                'success': True,
+                'data': {
+                    'title': info['title'],
+                    'duration': info['duration'],
+                    'thumbnail': info.get('thumbnail', ''),
+                    'description': info.get('description', ''),
+                    'uploader': info.get('uploader', ''),
+                    'view_count': info.get('view_count', 0),
+                    'upload_date': info.get('upload_date', ''),
+                    'webpage_url': info.get('webpage_url', url),
+                    'formats': formats[:10],
+                    'method': 'yt-dlp'
+                }
+            })
+        
+        # yt-dlp 失敗，檢查是否為 Instagram URL
+        if 'instagram.com' in url.lower():
+            instagram_info = extract_instagram_video(url)
+            if instagram_info and instagram_info['video_urls']:
+                formats = []
+                for idx, video in enumerate(instagram_info['video_urls']):
+                    formats.append({
+                        'format_id': f'instagram_{idx}',
+                        'ext': video['type'].split('/')[-1] if '/' in video['type'] else 'mp4',
+                        'resolution': video.get('quality', 'unknown'),
+                        'filesize': 0,
+                        'quality': 0,
+                        'video_url': video['url']
+                    })
+                
+                return jsonify({
+                    'success': True,
+                    'data': {
+                        'title': instagram_info['title'],
+                        'duration': instagram_info['duration'],
+                        'thumbnail': '',
+                        'description': '',
+                        'uploader': '',
+                        'view_count': 0,
+                        'upload_date': '',
+                        'webpage_url': url,
+                        'formats': formats,
+                        'method': 'instagram_parse',
+                        'video_urls': instagram_info['video_urls']
+                    }
+                })
+        
+        # 使用備用方案：HTML解析
+        html_info = extract_video_from_html(url)
+        if html_info and html_info['video_urls']:
+            formats = []
+            for idx, video in enumerate(html_info['video_urls']):
+                formats.append({
+                    'format_id': f'html_{idx}',
+                    'ext': video['type'].split('/')[-1] if '/' in video['type'] else 'mp4',
+                    'resolution': video.get('quality', 'unknown'),
+                    'filesize': 0,
+                    'quality': 0,
+                    'video_url': video['url']
+                })
+            
+            return jsonify({
+                'success': True,
+                'data': {
+                    'title': html_info['title'],
+                    'duration': html_info['duration'],
+                    'thumbnail': '',
+                    'description': '',
+                    'uploader': '',
+                    'view_count': 0,
+                    'upload_date': '',
+                    'webpage_url': url,
+                    'formats': formats,
+                    'method': 'html_parse',
+                    'video_urls': html_info['video_urls']
+                }
+            })
+        
+        return jsonify({
+            'success': False,
+            'error': 'Unable to extract video information'
+        }), 400
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'Extraction failed: {str(e)}'
+        }), 500
+
+@app.route(f'/api/{API_VERSION}/download', methods=['POST'])
+@require_api_key
+def api_download():
+    """下载视频API（供外部服务调用）"""
+    data = request.get_json() or {}
+    url = data.get('url', '').strip()
+    format_id = data.get('format_id', 'best')
+    video_url = data.get('video_url', None)
+    method = data.get('method', 'yt-dlp')
+    webhook_url = data.get('webhook_url', None)  # Optional webhook callback
+    lang = data.get('language', 'en')
+    
+    if not url:
+        return jsonify({
+            'success': False,
+            'error': 'URL is required'
+        }), 400
+    
+    if not is_valid_url(url):
+        return jsonify({
+            'success': False,
+            'error': 'Invalid URL format'
+        }), 400
+    
+    # 生成任务ID
+    task_id = str(uuid.uuid4())
+    
+    # 存储webhook回调URL
+    if webhook_url:
+        with webhook_lock:
+            webhook_callbacks[task_id] = webhook_url
+    
+    update_status(task_id, 'processing', 'status_starting', 0, lang)
+    
+    # 启动异步下载任务
+    thread = threading.Thread(target=download_video_async, args=(task_id, url, format_id, video_url, method))
+    thread.daemon = True
+    thread.start()
+    
+    base_url = request.url_root.rstrip('/')
+    return jsonify({
+        'success': True,
+        'task_id': task_id,
+        'status_url': f'{base_url}/api/{API_VERSION}/status/{task_id}',
+        'message': 'Download task started'
+    })
+
+@app.route(f'/api/{API_VERSION}/status/<task_id>', methods=['GET'])
+@require_api_key
+def api_get_status(task_id):
+    """获取下载状态API（供外部服务调用）"""
+    with status_lock:
+        if task_id in download_status:
+            status = download_status[task_id].copy()
+            base_url = request.url_root.rstrip('/')
+            if 'download_url' in status:
+                status['download_url'] = base_url + status['download_url']
+            return jsonify({
+                'success': True,
+                'data': status
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Task not found'
+            }), 404
+
+@app.route(f'/api/{API_VERSION}/file/<file_id>', methods=['GET'])
+@require_api_key
+def api_get_file(file_id):
+    """获取文件API（供外部服务调用）"""
+    # 查找匹配的文件
+    for filename in os.listdir(DOWNLOAD_DIR):
+        if filename.startswith(file_id):
+            file_path = os.path.join(DOWNLOAD_DIR, filename)
+            if os.path.exists(file_path):
+                return send_file(
+                    file_path,
+                    as_attachment=True,
+                    download_name=filename
+                )
+    
+    return jsonify({
+        'success': False,
+        'error': 'File not found'
+    }), 404
+
+@app.route(f'/api/{API_VERSION}/docs', methods=['GET'])
+def api_docs():
+    """API文档端点"""
+    base_url = request.url_root.rstrip('/')
+    return jsonify({
+        'title': 'Video Downloader API Documentation',
+        'version': API_VERSION,
+        'base_url': f'{base_url}/api/{API_VERSION}',
+        'authentication': {
+            'required': API_KEY is not None,
+            'method': 'X-API-Key header or api_key query parameter',
+            'example': 'X-API-Key: your-api-key-here'
+        },
+        'endpoints': {
+            'GET /info': {
+                'description': 'Get API information and available endpoints',
+                'authentication': 'Required if API_KEY is set'
+            },
+            'POST /extract': {
+                'description': 'Extract video information without downloading',
+                'request_body': {
+                    'url': 'string (required) - Video URL',
+                    'language': 'string (optional) - Language code (en, zh-TW, zh-CN)'
+                },
+                'response': {
+                    'success': 'boolean',
+                    'data': {
+                        'title': 'string',
+                        'duration': 'number',
+                        'thumbnail': 'string',
+                        'description': 'string',
+                        'uploader': 'string',
+                        'view_count': 'number',
+                        'upload_date': 'string',
+                        'formats': 'array'
+                    }
+                }
+            },
+            'POST /download': {
+                'description': 'Start video download task',
+                'request_body': {
+                    'url': 'string (required) - Video URL',
+                    'format_id': 'string (optional) - Video format (default: best)',
+                    'video_url': 'string (optional) - Direct video URL',
+                    'method': 'string (optional) - Extraction method',
+                    'webhook_url': 'string (optional) - Webhook callback URL',
+                    'language': 'string (optional) - Language code'
+                },
+                'response': {
+                    'success': 'boolean',
+                    'task_id': 'string',
+                    'status_url': 'string',
+                    'message': 'string'
+                }
+            },
+            'GET /status/<task_id>': {
+                'description': 'Get download task status',
+                'response': {
+                    'success': 'boolean',
+                    'data': {
+                        'status': 'string (processing, downloading, completed, error)',
+                        'message': 'string',
+                        'progress': 'number (0-100)',
+                        'download_url': 'string (if completed)',
+                        'filename': 'string (if completed)'
+                    }
+                }
+            },
+            'GET /file/<file_id>': {
+                'description': 'Download video file',
+                'response': 'Binary file stream'
+            }
+        },
+        'webhook': {
+            'description': 'If webhook_url is provided in download request, a POST request will be sent when download completes or fails',
+            'payload': {
+                'task_id': 'string',
+                'status': 'string',
+                'message': 'string',
+                'progress': 'number',
+                'download_url': 'string',
+                'filename': 'string',
+                'timestamp': 'string (ISO 8601)'
+            }
+        }
+    })
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
