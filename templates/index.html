@@ -306,6 +306,51 @@
             min-height: 20px;
         }
 
+        .method-history {
+            margin-top: 20px;
+            background: #f5f5f5;
+            border-radius: 15px;
+            padding: 20px;
+            display: none;
+        }
+
+        .method-history h3 {
+            margin-bottom: 10px;
+            font-size: 1.1em;
+            color: #333;
+        }
+
+        .method-history ul {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .method-entry {
+            padding: 10px 12px;
+            border-radius: 10px;
+            background: white;
+            margin-bottom: 10px;
+            border: 1px solid #eee;
+        }
+
+        .method-entry .method-title {
+            font-weight: 600;
+            color: #333;
+        }
+
+        .method-entry .method-status {
+            font-size: 0.85em;
+            color: #666;
+            margin-top: 5px;
+        }
+
+        .method-entry .method-detail {
+            font-size: 0.8em;
+            color: #999;
+            margin-top: 3px;
+        }
+
         .format-group {
             margin-top: 20px;
         }
@@ -530,6 +575,11 @@
             </div>
         </div>
 
+        <div class="method-history" id="methodHistory">
+            <h3 data-i18n="method_attempts_title">下載方法狀態</h3>
+            <ul id="methodList"></ul>
+        </div>
+
         <div class="error" id="error"></div>
         <div class="success-message" id="success"></div>
 
@@ -622,6 +672,7 @@
             }
 
             refreshFormatOptionsText();
+            renderMethodHistory(currentMethodHistory);
         }
         
         // 切换语言
@@ -678,6 +729,7 @@
         let currentMethod = 'yt-dlp';
         let currentVideoUrl = null;
         let statusPollInterval = null;
+        let currentMethodHistory = [];
 
         function showLoading(show) {
             document.getElementById('loading').style.display = show ? 'block' : 'none';
@@ -867,6 +919,29 @@
             }
         }
 
+        function renderMethodHistory(methods = []) {
+            const historyContainer = document.getElementById('methodHistory');
+            const list = document.getElementById('methodList');
+            currentMethodHistory = methods;
+            if (!historyContainer || !list) return;
+            list.innerHTML = '';
+            if (!methods.length) {
+                historyContainer.style.display = 'none';
+                return;
+            }
+            historyContainer.style.display = 'block';
+            methods.forEach(event => {
+                const li = document.createElement('li');
+                li.className = 'method-entry';
+                li.innerHTML = `
+                    <div class="method-title">${event.method_label || ''}</div>
+                    <div class="method-status">${event.status_label || ''}</div>
+                    ${event.detail ? `<div class="method-detail">${event.detail}</div>` : ''}
+                `;
+                list.appendChild(li);
+            });
+        }
+
         function formatDuration(seconds) {
             if (!seconds || seconds === 0) return t('unknown');
             const hours = Math.floor(seconds / 3600);
@@ -1004,6 +1079,9 @@
                         // 使用message_key进行翻译，如果没有则使用message
                         const messageKey = data.message_key || null;
                         updateProgress(data.status, data.message, data.progress, messageKey);
+                        if (data.methods) {
+                            renderMethodHistory(data.methods);
+                        }
 
                         if (data.status === 'completed') {
                             stopProgressPolling();
@@ -1066,6 +1144,7 @@
             const url = document.getElementById('videoUrl').value.trim();
             clearMessages();
             populateFormats([]);
+            renderMethodHistory([]);
             
             if (!url) {
                 showError(t('enter_video_url'));
@@ -1152,6 +1231,7 @@
 
         async function downloadVideo() {
             clearMessages();
+            renderMethodHistory([]);
 
             if (!currentUrl) {
                 showError(t('search_first'));

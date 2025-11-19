@@ -569,6 +569,24 @@ def extract_video_from_html(url):
     except Exception as e:
         return None
 
+def add_method_event(task_id, method_key, status, lang=None, detail=None):
+    """記錄方法嘗試狀態"""
+    if lang is None:
+        lang = get_language()
+    method_label = t(f'method_{method_key}', lang)
+    status_label = t(f'method_status_{status}', lang)
+    event = {
+        'method': method_key,
+        'method_label': method_label,
+        'status': status,
+        'status_label': status_label,
+        'detail': detail or '',
+        'timestamp': datetime.utcnow().isoformat()
+    }
+    with status_lock:
+        entry = download_status.setdefault(task_id, {})
+        entry.setdefault('methods', []).append(event)
+
 def update_status(task_id, status, message, progress=0, lang=None, file_id=None, filename=None, download_url=None):
     """更新下載狀態"""
     if lang is None:
@@ -579,13 +597,14 @@ def update_status(task_id, status, message, progress=0, lang=None, file_id=None,
     translated_message = t(message, lang) if message_key else message
     
     with status_lock:
-        download_status[task_id] = {
+        download_status[task_id] = download_status.get(task_id, {})
+        download_status[task_id].update({
             'status': status,  # 'processing', 'downloading', 'completed', 'error'
             'message': translated_message,  # 翻译后的消息（用于向后兼容）
             'message_key': message_key,  # 翻译key（用于前端重新翻译）
             'progress': progress,
             'timestamp': time.time()
-        }
+        })
         if file_id:
             download_status[task_id]['file_id'] = file_id
         if filename:
@@ -857,18 +876,22 @@ def download_video_async(task_id, url, format_id, video_url, method, user_cookie
         # 如果提供了直接的視頻URL（來自HTML解析），使用直接下載
         if video_url:
             update_status(task_id, 'processing', 'status_preparing', 10, lang)
+            add_method_event(task_id, 'direct_download', 'trying', lang)
             downloaded_file = download_video_direct(url, video_url, file_id, task_id, lang)
             if downloaded_file:
                 download_url = f'/api/file/{file_id}'
                 filename = os.path.basename(downloaded_file)
+                add_method_event(task_id, 'direct_download', 'success', lang)
                 update_status(task_id, 'completed', 'status_completed', 100, lang, file_id, filename, download_url)
                 return
             else:
+                add_method_event(task_id, 'direct_download', 'failed', lang)
                 update_status(task_id, 'error', 'error_direct_download_failed', 0, lang)
                 return
         
         # 嘗試使用 yt-dlp
         update_status(task_id, 'processing', 'status_initializing', 15, lang)
+        add_method_event(task_id, 'yt_dlp', 'trying', lang)
         try:
             output_path = os.path.join(DOWNLOAD_DIR, f'{file_id}.%(ext)s')
             
@@ -927,6 +950,7 @@ def download_video_async(task_id, url, format_id, video_url, method, user_cookie
                 if downloaded_file and os.path.exists(downloaded_file):
                     download_url = f'/api/file/{file_id}'
                     filename = os.path.basename(downloaded_file)
+                    add_method_event(task_id, 'yt_dlp', 'success', lang)
                     update_status(task_id, 'completed', 'status_completed', 100, lang, file_id, filename, download_url)
                     return
                 else:
@@ -940,29 +964,39 @@ def download_video_async(task_id, url, format_id, video_url, method, user_cookie
                     raise Exception('yt-dlp download failed')
                     
         except Exception as e:
+            add_method_event(task_id, 'yt_dlp', 'failed', lang, str(e))
             # yt-dlp 失敗，使用備用方案
             update_status(task_id, 'processing', 'status_alternative', 30, lang)
             try:
+                add_method_event(task_id, 'yt_dlp_cli', 'trying', lang)
                 subprocess_file = run_yt_dlp_subprocess(url, format_id, file_id, cookie_file)
                 if subprocess_file:
                     download_url = f'/api/file/{file_id}'
                     filename = os.path.basename(subprocess_file)
+                    add_method_event(task_id, 'yt_dlp_cli', 'success', lang)
                     update_status(task_id, 'completed', 'status_completed', 100, lang, file_id, filename, download_url)
                     return
+                else:
+                    add_method_event(task_id, 'yt_dlp_cli', 'failed', lang)
 
                 # 如果是 YouTube，嘗試使用 PyTube
                 if 'youtube.com' in url.lower() or 'youtu.be' in url.lower():
                     update_status(task_id, 'processing', 'status_pytube', 35, lang)
+                    add_method_event(task_id, 'pytube', 'trying', lang)
                     pytube_file = download_video_with_pytube(url, file_id)
                     if pytube_file:
                         download_url = f'/api/file/{file_id}'
                         filename = os.path.basename(pytube_file)
+                        add_method_event(task_id, 'pytube', 'success', lang)
                         update_status(task_id, 'completed', 'status_completed', 100, lang, file_id, filename, download_url)
                         return
+                    else:
+                        add_method_event(task_id, 'pytube', 'failed', lang)
                 
                 # 如果是 Instagram，使用專門的提取方法
                 if 'instagram.com' in url.lower():
                     update_status(task_id, 'processing', 'status_instagram', 35, lang)
+                    add_method_event(task_id, 'instagram', 'trying', lang)
                     instagram_info = extract_instagram_video(url)
                     if instagram_info and instagram_info['video_urls']:
                         video_url_to_download = instagram_info['video_urls'][0]['url']
@@ -970,33 +1004,46 @@ def download_video_async(task_id, url, format_id, video_url, method, user_cookie
                         if downloaded_file:
                             download_url = f'/api/file/{file_id}'
                             filename = os.path.basename(downloaded_file)
+                            add_method_event(task_id, 'instagram', 'success', lang)
                             update_status(task_id, 'completed', 'status_completed', 100, lang, file_id, filename, download_url)
                             return
+                        else:
+                            add_method_event(task_id, 'instagram', 'failed', lang)
                 
                 # 使用通用 HTML 解析
                 update_status(task_id, 'processing', 'status_parsing', 40, lang)
                 html_info = extract_video_from_html(url)
                 if html_info and html_info['video_urls']:
+                    add_method_event(task_id, 'html_parse', 'trying', lang)
                     # 選擇第一個可用的視頻URL
                     video_url_to_download = html_info['video_urls'][0]['url']
                     
                     # 如果是 YouTube 或 Vimeo URL，再次嘗試 yt-dlp
                     if 'youtube.com' in video_url_to_download or 'youtu.be' in video_url_to_download or 'vimeo.com' in video_url_to_download:
                         update_status(task_id, 'processing', 'status_retrying', 45, lang)
+                        add_method_event(task_id, 'yt_dlp_cli', 'trying', lang)
                         subprocess_file = run_yt_dlp_subprocess(video_url_to_download, format_id, file_id, cookie_file)
                         if subprocess_file:
                             download_url = f'/api/file/{file_id}'
                             filename = os.path.basename(subprocess_file)
+                            add_method_event(task_id, 'yt_dlp_cli', 'success', lang)
                             update_status(task_id, 'completed', 'status_completed', 100, lang, file_id, filename, download_url)
                             return
+                        else:
+                            add_method_event(task_id, 'yt_dlp_cli', 'failed', lang)
                     
                     # 直接下載視頻文件
+                    add_method_event(task_id, 'direct_download', 'trying', lang)
                     downloaded_file = download_video_direct(url, video_url_to_download, file_id, task_id, lang)
                     if downloaded_file:
                         download_url = f'/api/file/{file_id}'
                         filename = os.path.basename(downloaded_file)
+                        add_method_event(task_id, 'direct_download', 'success', lang)
                         update_status(task_id, 'completed', 'status_completed', 100, lang, file_id, filename, download_url)
                         return
+                    else:
+                        add_method_event(task_id, 'direct_download', 'failed', lang)
+                    add_method_event(task_id, 'html_parse', 'failed', lang)
                 
                 update_status(task_id, 'error', 'error_extract_or_download', 0, lang)
                 
