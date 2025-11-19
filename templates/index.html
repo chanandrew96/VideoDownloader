@@ -529,6 +529,22 @@
                     option.textContent = t(key);
                 }
             });
+            
+            // 更新状态消息（如果有翻译key）
+            const statusMessage = document.getElementById('statusMessage');
+            if (statusMessage) {
+                const messageKey = statusMessage.getAttribute('data-i18n-key');
+                if (messageKey) {
+                    statusMessage.textContent = t(messageKey);
+                }
+            }
+            
+            // 更新下载链接文本
+            const downloadLink = document.querySelector('.download-link');
+            if (downloadLink && downloadLink.getAttribute('data-i18n-key')) {
+                const linkKey = downloadLink.getAttribute('data-i18n-key');
+                downloadLink.textContent = t(linkKey);
+            }
         }
         
         // 切换语言
@@ -552,8 +568,25 @@
                         translations[currentLanguage] = langData.translations;
                     }
                     updateTranslations();
-                    // 重新加载页面以应用所有更改
-                    location.reload();
+                    
+                    // 如果正在轮询状态，重新获取状态并更新翻译
+                    if (statusPollInterval) {
+                        // 获取当前任务ID（从URL或存储的变量）
+                        const currentTaskId = document.getElementById('statusMessage')?.getAttribute('data-task-id');
+                        if (currentTaskId) {
+                            // 重新获取状态并更新
+                            try {
+                                const statusResponse = await fetch(`/api/status/${currentTaskId}`);
+                                const statusData = await statusResponse.json();
+                                if (statusResponse.ok) {
+                                    const messageKey = statusData.message_key || null;
+                                    updateProgress(statusData.status, statusData.message, statusData.progress, messageKey);
+                                }
+                            } catch (e) {
+                                console.error('Failed to refresh status:', e);
+                            }
+                        }
+                    }
                 }
             } catch (error) {
                 console.error('Language change error:', error);
@@ -677,7 +710,7 @@
             }
         }
 
-        function updateProgress(status, message, progress) {
+        function updateProgress(status, message, progress, messageKey = null) {
             const progressContainer = document.getElementById('progressContainer');
             const progressBar = document.getElementById('progressBar');
             const statusMessage = document.getElementById('statusMessage');
@@ -685,7 +718,18 @@
 
             progressContainer.classList.add('show');
             progressBar.style.width = progress + '%';
-            statusMessage.textContent = message;
+            
+            // 如果有翻译key，使用当前语言翻译；否则使用原始消息
+            if (messageKey) {
+                const translated = t(messageKey);
+                statusMessage.textContent = translated;
+                // 存储翻译key以便语言切换时重新翻译
+                statusMessage.setAttribute('data-i18n-key', messageKey);
+            } else {
+                statusMessage.textContent = message;
+                statusMessage.removeAttribute('data-i18n-key');
+            }
+            
             progressText.textContent = progress + '%';
         }
 
@@ -699,24 +743,33 @@
         async function pollDownloadStatus(taskId) {
             stopProgressPolling();
             
+            // 存储当前任务ID以便语言切换时使用
+            const statusMessage = document.getElementById('statusMessage');
+            if (statusMessage) {
+                statusMessage.setAttribute('data-task-id', taskId);
+            }
+            
             statusPollInterval = setInterval(async () => {
                 try {
                     const response = await fetch(`/api/status/${taskId}`);
                     const data = await response.json();
 
                     if (response.ok) {
-                        updateProgress(data.status, data.message, data.progress);
+                        // 使用message_key进行翻译，如果没有则使用message
+                        const messageKey = data.message_key || null;
+                        updateProgress(data.status, data.message, data.progress, messageKey);
 
                         if (data.status === 'completed') {
                             stopProgressPolling();
                             showLoading(false);
-                            updateProgress('completed', t('status_completed'), 100);
+                            updateProgress('completed', t('status_completed'), 100, 'status_completed');
                             
                             // 創建下載鏈接
                             const downloadLink = document.createElement('a');
                             downloadLink.href = data.download_url;
                             downloadLink.className = 'download-link';
                             downloadLink.textContent = t('click_to_download');
+                            downloadLink.setAttribute('data-i18n-key', 'click_to_download');  // 存储翻译key
                             downloadLink.download = data.filename;
                             
                             // 清除之前的鏈接
@@ -879,7 +932,7 @@
 
                 // 開始輪詢狀態
                 showLoading(false);
-                updateProgress('processing', t('status_starting'), 0);
+                updateProgress('processing', t('status_starting'), 0, 'status_starting');
                 pollDownloadStatus(data.task_id);
 
             } catch (error) {

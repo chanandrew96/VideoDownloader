@@ -39,26 +39,27 @@ webhook_lock = threading.Lock()
 try:
     from translations import TRANSLATIONS
     translations = TRANSLATIONS
-except ImportError:
-    # 如果导入失败，尝试从JSON文件加载（向后兼容）
-    try:
-        import os
-        translations_path = os.path.join(os.path.dirname(__file__), 'translations.json')
-        with open(translations_path, 'r', encoding='utf-8') as f:
-            translations = json.load(f)
-    except Exception as e:
-        print(f"Error loading translations: {e}")
-        # 提供默认的英文翻译作为后备
-        translations = {
-            'en': {
-                'app_title': 'Video Downloader',
-                'subtitle': 'Enter URL, download videos easily',
-                'error_url_empty': 'URL cannot be empty',
-                'error_invalid_url': 'Invalid URL format',
-            },
-            'zh-TW': {},
-            'zh-CN': {}
-        }
+except ImportError as e:
+    print(f"Error importing translations: {e}")
+    # 提供默认的英文翻译作为后备
+    translations = {
+        'en': {
+            'app_title': 'Video Downloader',
+            'subtitle': 'Enter URL, download videos easily',
+            'error_url_empty': 'URL cannot be empty',
+            'error_invalid_url': 'Invalid URL format',
+            'search_video': 'Search Video',
+            'download_video': 'Download Video',
+            'processing': 'Processing...',
+            'status_starting': 'Starting download...',
+            'status_completed': 'Download completed!',
+            'click_to_download': 'Click to download video',
+            'download_prepared': 'Video download ready!',
+            'download_failed': 'Download failed',
+        },
+        'zh-TW': {},
+        'zh-CN': {}
+    }
 
 def get_language():
     """获取当前语言"""
@@ -464,14 +465,15 @@ def update_status(task_id, status, message, progress=0, lang=None, file_id=None,
     if lang is None:
         lang = get_language()
     
-    # 如果message是翻译key，则翻译它
-    if message.startswith('status_'):
-        message = t(message, lang)
+    # 存储原始消息key和翻译后的消息
+    message_key = message if message.startswith('status_') or message.startswith('error_') else None
+    translated_message = t(message, lang) if message_key else message
     
     with status_lock:
         download_status[task_id] = {
             'status': status,  # 'processing', 'downloading', 'completed', 'error'
-            'message': message,
+            'message': translated_message,  # 翻译后的消息（用于向后兼容）
+            'message_key': message_key,  # 翻译key（用于前端重新翻译）
             'progress': progress,
             'timestamp': time.time()
         }
