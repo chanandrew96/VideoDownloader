@@ -35,6 +35,10 @@ status_lock = threading.Lock()
 webhook_callbacks = {}
 webhook_lock = threading.Lock()
 
+# Preferred download settings
+PREFERRED_DEFAULT_FORMAT = 'bv*+ba/bestvideo+bestaudio/best'
+MERGE_OUTPUT_FORMAT = 'mp4'
+
 # 导入翻译数据（直接嵌入代码，不依赖外部文件）
 try:
     from translations import TRANSLATIONS
@@ -83,6 +87,12 @@ def get_language():
         return 'en'
     else:
         return 'zh-TW'  # 默认繁体中文
+
+def normalize_format_id(format_id):
+    """Normalize format id to avoid manifest-only downloads."""
+    if not format_id or format_id.lower() in ('best', 'default'):
+        return PREFERRED_DEFAULT_FORMAT
+    return format_id
 
 def t(key, lang=None):
     """翻译函数"""
@@ -671,6 +681,7 @@ def download_video_async(task_id, url, format_id, video_url, method):
     """異步下載視頻"""
     file_id = str(uuid.uuid4())
     lang = get_language()
+    format_id = normalize_format_id(format_id)
     try:
         update_status(task_id, 'processing', 'status_obtaining', 5, lang)
         
@@ -724,7 +735,13 @@ def download_video_async(task_id, url, format_id, video_url, method):
                 'outtmpl': output_path,
                 'quiet': True,
                 'no_warnings': True,
+                'noplaylist': True,
+                'merge_output_format': MERGE_OUTPUT_FORMAT,
                 'progress_hooks': [progress_hook],
+                'postprocessors': [{
+                    'key': 'FFmpegVideoConvertor',
+                    'preferedformat': MERGE_OUTPUT_FORMAT
+                }]
             }
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -780,12 +797,20 @@ def download_video_async(task_id, url, format_id, video_url, method):
                         update_status(task_id, 'processing', 'status_retrying', 45, lang)
                         try:
                             output_path = os.path.join(DOWNLOAD_DIR, f'{file_id}.%(ext)s')
-                            ydl_opts = {
-                                'format': format_id,
-                                'outtmpl': output_path,
-                                'quiet': True,
-                                'no_warnings': True,
-                            }
+                        ydl_opts = {
+                            'format': format_id,
+                        ydl_opts = {
+                            'format': format_id,
+                            'outtmpl': output_path,
+                            'quiet': True,
+                            'no_warnings': True,
+                            'noplaylist': True,
+                            'merge_output_format': MERGE_OUTPUT_FORMAT,
+                            'postprocessors': [{
+                                'key': 'FFmpegVideoConvertor',
+                                'preferedformat': MERGE_OUTPUT_FORMAT
+                            }]
+                        }
                             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                                 info = ydl.extract_info(video_url_to_download, download=True)
                                 downloaded_file = ydl.prepare_filename(info)
@@ -817,7 +842,7 @@ def download():
     """下载视频API - 启动异步下载任务"""
     data = request.get_json()
     url = data.get('url', '').strip()
-    format_id = data.get('format_id', 'best')
+    format_id = normalize_format_id(data.get('format_id', 'best'))
     video_url = data.get('video_url', None)
     method = data.get('method', 'yt-dlp')
     
@@ -1011,7 +1036,7 @@ def api_download():
     """下载视频API（供外部服务调用）"""
     data = request.get_json() or {}
     url = data.get('url', '').strip()
-    format_id = data.get('format_id', 'best')
+    format_id = normalize_format_id(data.get('format_id', 'best'))
     video_url = data.get('video_url', None)
     method = data.get('method', 'yt-dlp')
     webhook_url = data.get('webhook_url', None)  # Optional webhook callback

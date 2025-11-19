@@ -16,9 +16,10 @@
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
             display: flex;
+            flex-direction: column;
             justify-content: center;
             align-items: center;
-            padding: 20px;
+            padding: 80px 20px 20px;
         }
 
         .container {
@@ -247,12 +248,13 @@
         }
 
         .language-selector {
-            position: absolute;
+            position: fixed;
             top: 20px;
             right: 20px;
             display: flex;
             gap: 10px;
             align-items: center;
+            z-index: 1000;
         }
 
         .language-selector label {
@@ -275,6 +277,29 @@
         .language-selector select:focus {
             outline: none;
             border-color: #667eea;
+        }
+
+        .format-group {
+            margin-top: 20px;
+        }
+
+        #formatSelect {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+
+        #formatSelect:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        #formatSelect:disabled {
+            background: #f5f5f5;
+            cursor: not-allowed;
         }
 
         .container {
@@ -442,6 +467,13 @@
             </button>
         </div>
 
+        <div class="format-group">
+            <label for="formatSelect" data-i18n="format_label">下載格式</label>
+            <select id="formatSelect" disabled>
+                <option value="" data-i18n="select_format">請選擇格式</option>
+            </select>
+        </div>
+
         <div class="loading" id="loading" style="display: none;">
             <div class="spinner"></div>
             <p data-i18n="processing">處理中...</p>
@@ -492,6 +524,8 @@
         
         // 初始化语言选择器
         document.getElementById('languageSelect').value = currentLanguage;
+        const formatSelect = document.getElementById('formatSelect');
+        let availableFormats = [];
         
         // 翻译函数
         function t(key) {
@@ -628,6 +662,93 @@
             successDiv.textContent = '';
             errorDiv.classList.remove('show');
             errorDiv.textContent = '';
+        }
+
+        function formatFilesize(bytes) {
+            if (!bytes || bytes <= 0) return '';
+            const mb = bytes / (1024 * 1024);
+            if (mb >= 1024) {
+                return `${(mb / 1024).toFixed(2)} GB`;
+            }
+            return `${mb.toFixed(1)} MB`;
+        }
+
+        function buildFormatLabel(format) {
+            const parts = [];
+            if (format.resolution && format.resolution !== 'unknown') {
+                parts.push(`${t('resolution')}: ${format.resolution}`);
+            }
+            if (format.ext) {
+                parts.push(format.ext.toUpperCase());
+            }
+            const sizeLabel = formatFilesize(format.filesize || format.filesize_approx);
+            if (sizeLabel) {
+                parts.push(`${t('filesize')}: ${sizeLabel}`);
+            }
+            if (format.quality && format.quality > 0) {
+                parts.push(`Q${format.quality}`);
+            }
+            if (!parts.length) {
+                parts.push(t('select_format'));
+            }
+            return parts.join(' • ');
+        }
+
+        function updateCurrentFormat(formatId, videoUrl = '') {
+            currentFormatId = formatId && formatId !== '' ? formatId : 'best';
+            if (videoUrl) {
+                currentVideoUrl = videoUrl;
+            } else if (currentMethod === 'html_parse' || currentMethod === 'instagram_parse') {
+                const selectedFormat = availableFormats.find(f => f.format_id === currentFormatId);
+                if (selectedFormat && selectedFormat.video_url) {
+                    currentVideoUrl = selectedFormat.video_url;
+                } else if (!currentVideoUrl && availableFormats.length) {
+                    const fallback = availableFormats.find(f => f.video_url);
+                    currentVideoUrl = fallback ? fallback.video_url : currentVideoUrl;
+                }
+            } else {
+                currentVideoUrl = null;
+            }
+        }
+
+        function populateFormats(formats = []) {
+            availableFormats = formats || [];
+            if (!formatSelect) return;
+
+            formatSelect.innerHTML = '';
+
+            const defaultOption = document.createElement('option');
+            defaultOption.value = '';
+            defaultOption.setAttribute('data-i18n', 'select_format');
+            defaultOption.textContent = t('select_format');
+            formatSelect.appendChild(defaultOption);
+
+            if (!formats || !formats.length) {
+                formatSelect.disabled = true;
+                updateCurrentFormat('best');
+                return;
+            }
+
+            formats.forEach((fmt, index) => {
+                const option = document.createElement('option');
+                const value = fmt.format_id || `format_${index}`;
+                option.value = value;
+                option.textContent = buildFormatLabel(fmt);
+                if (fmt.video_url) {
+                    option.dataset.videoUrl = fmt.video_url;
+                }
+                formatSelect.appendChild(option);
+            });
+
+            formatSelect.disabled = false;
+            const firstFormat = formats[0];
+            if (firstFormat && firstFormat.format_id) {
+                formatSelect.value = firstFormat.format_id;
+                updateCurrentFormat(firstFormat.format_id, firstFormat.video_url || '');
+            } else {
+                formatSelect.value = '';
+                updateCurrentFormat('best');
+            }
         }
 
         function formatDuration(seconds) {
@@ -815,9 +936,20 @@
             }, 500); // 每500ms輪詢一次
         }
 
+        if (formatSelect) {
+            formatSelect.addEventListener('change', (event) => {
+                const selectedOption = event.target.options[event.target.selectedIndex];
+                const videoUrl = selectedOption ? selectedOption.dataset.videoUrl || '' : '';
+                updateCurrentFormat(event.target.value, videoUrl);
+            });
+        }
+
+        populateFormats([]);
+
         async function extractVideo() {
             const url = document.getElementById('videoUrl').value.trim();
             clearMessages();
+            populateFormats([]);
             
             if (!url) {
                 showError(t('enter_video_url'));
@@ -884,6 +1016,7 @@
                 
                 document.getElementById('result').classList.add('show');
                 document.getElementById('downloadBtn').disabled = false;
+                populateFormats(data.formats || []);
                 
                 let successMsg = t('video_info_extracted');
                 if (currentMethod === 'html_parse') {

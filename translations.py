@@ -57,7 +57,11 @@ TRANSLATIONS = {
         "video_view_count": "觀看次數",
         "video_upload_date": "上傳日期",
         "preview_not_available": "預覽不可用",
-        "confirm_download": "確認下載"
+        "confirm_download": "確認下載",
+        "format_label": "下載格式",
+        "select_format": "請選擇格式",
+        "resolution": "解析度",
+        "filesize": "檔案大小"
     },
     "zh-CN": {
         "app_title": "Video Downloader",
@@ -116,7 +120,11 @@ TRANSLATIONS = {
         "video_view_count": "观看次数",
         "video_upload_date": "上传日期",
         "preview_not_available": "预览不可用",
-        "confirm_download": "确认下载"
+        "confirm_download": "确认下载",
+        "format_label": "下载格式",
+        "select_format": "请选择格式",
+        "resolution": "分辨率",
+        "filesize": "文件大小"
     },
     "en": {
         "app_title": "Video Downloader",
@@ -175,7 +183,11 @@ TRANSLATIONS = {
         "video_view_count": "View Count",
         "video_upload_date": "Upload Date",
         "preview_not_available": "Preview not available",
-        "confirm_download": "Confirm Download"
+        "confirm_download": "Confirm Download",
+        "format_label": "Download Format",
+        "select_format": "Select a format",
+        "resolution": "Resolution",
+        "filesize": "File size"
     }
 }
 
