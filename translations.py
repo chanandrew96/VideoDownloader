@@ -61,7 +61,14 @@ TRANSLATIONS = {
         "format_label": "下載格式",
         "select_format": "請選擇格式",
         "resolution": "解析度",
-        "filesize": "檔案大小"
+        "filesize": "檔案大小",
+        "upload_cookies_label": "上傳 cookies.txt（可選，用於取得受限影片）",
+        "upload_cookies_button": "上傳 Cookies",
+        "clear_cookies_button": "清除 Cookies",
+        "cookie_upload_success": "Cookies 已成功上傳。",
+        "cookie_upload_error": "Cookies 上傳失敗。",
+        "cookie_cleared": "Cookies 已清除。",
+        "select_cookie_file": "請選擇 cookies.txt 檔案"
     },
     "zh-CN": {
         "app_title": "Video Downloader",
@@ -124,7 +131,14 @@ TRANSLATIONS = {
         "format_label": "下载格式",
         "select_format": "请选择格式",
         "resolution": "分辨率",
-        "filesize": "文件大小"
+        "filesize": "文件大小",
+        "upload_cookies_label": "上传 cookies.txt（可选，用于获取受限视频）",
+        "upload_cookies_button": "上传 Cookies",
+        "clear_cookies_button": "清除 Cookies",
+        "cookie_upload_success": "Cookies 上传成功。",
+        "cookie_upload_error": "Cookies 上传失败。",
+        "cookie_cleared": "Cookies 已清除。",
+        "select_cookie_file": "请选择 cookies.txt 文件"
     },
     "en": {
         "app_title": "Video Downloader",
@@ -187,7 +201,14 @@ TRANSLATIONS = {
         "format_label": "Download Format",
         "select_format": "Select a format",
         "resolution": "Resolution",
-        "filesize": "File size"
+        "filesize": "File size",
+        "upload_cookies_label": "Upload cookies.txt (optional, for restricted videos)",
+        "upload_cookies_button": "Upload Cookies",
+        "clear_cookies_button": "Clear Cookies",
+        "cookie_upload_success": "Cookies uploaded successfully.",
+        "cookie_upload_error": "Failed to upload cookies.",
+        "cookie_cleared": "Cookies cleared.",
+        "select_cookie_file": "Please select a cookies.txt file"
     }
 }
 

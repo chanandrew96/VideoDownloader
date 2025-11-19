@@ -54,6 +54,8 @@ ALLOWED_VIDEO_EXTENSIONS = ('.mp4', '.m4v', '.mov', '.webm', '.mkv', '.flv', '.a
 COOKIES_FILE = os.environ.get('YTDLP_COOKIES_FILE')
 COOKIES_CONTENT = os.environ.get('YTDLP_COOKIES')
 COOKIE_TEMP_FILE = None
+SESSION_COOKIE_DIR = os.path.join(DOWNLOAD_DIR, 'session_cookies')
+os.makedirs(SESSION_COOKIE_DIR, exist_ok=True)
 
 # 导入翻译数据（直接嵌入代码，不依赖外部文件）
 try:
@@ -110,13 +112,35 @@ def normalize_format_id(format_id):
         return PREFERRED_DEFAULT_FORMAT
     return format_id
 
-def get_cookie_file():
+def get_session_cookie_path():
+    """Get the current session's uploaded cookie file if available."""
+    try:
+        from flask import has_request_context
+        if has_request_context():
+            cookie_path = session.get('cookie_file')
+            if cookie_path and os.path.exists(cookie_path):
+                return cookie_path
+    except Exception:
+        pass
+    return None
+
+def get_cookie_file(preferred_path=None):
     """Return cookie file path if available."""
-    candidates = [COOKIES_FILE, COOKIE_TEMP_FILE]
+    candidates = [preferred_path, COOKIES_FILE, COOKIE_TEMP_FILE]
     for path in candidates:
         if path and os.path.exists(path):
             return path
     return None
+
+def set_session_cookie_file(file_path):
+    """Store cookie file path in session."""
+    session['cookie_file'] = file_path
+
+def clear_session_cookie_file():
+    """Remove session cookie file if exists."""
+    cookie_path = session.pop('cookie_file', None)
+    if cookie_path and os.path.exists(cookie_path):
+        os.remove(cookie_path)
 
 def t(key, lang=None):
     """翻译函数"""
@@ -238,7 +262,7 @@ def extract_video_info(url):
         'no_warnings': True,
         'extract_flat': False,
     }
-    cookie_file = get_cookie_file()
+    cookie_file = get_cookie_file(get_session_cookie_path())
     if cookie_file:
         ydl_opts['cookiefile'] = cookie_file
     
@@ -275,7 +299,7 @@ def get_video_formats(url):
         'no_warnings': True,
         'listformats': True,
     }
-    cookie_file = get_cookie_file()
+    cookie_file = get_cookie_file(get_session_cookie_path())
     if cookie_file:
         ydl_opts['cookiefile'] = cookie_file
     
@@ -655,6 +679,29 @@ def set_language():
         lang = get_language()
         return jsonify({'language': lang, 'translations': translations.get(lang, {})})
 
+@app.route('/api/cookies', methods=['POST', 'DELETE'])
+def manage_cookies():
+    """上传或清除cookies"""
+    if request.method == 'POST':
+        if 'cookies' not in request.files:
+            return jsonify({'success': False, 'error': 'No cookies file uploaded'}), 400
+        file = request.files['cookies']
+        if not file.filename:
+            return jsonify({'success': False, 'error': 'Empty filename'}), 400
+        existing = session.get('cookie_file')
+        if existing and os.path.exists(existing):
+            os.remove(existing)
+        os.makedirs(SESSION_COOKIE_DIR, exist_ok=True)
+        file_path = os.path.join(SESSION_COOKIE_DIR, f'{uuid.uuid4()}.txt')
+        file.save(file_path)
+        set_session_cookie_file(file_path)
+        return jsonify({'success': True, 'message': 'Cookies uploaded successfully'}), 200
+    else:
+        if session.get('cookie_file'):
+            clear_session_cookie_file()
+            return jsonify({'success': True, 'message': 'Cookies cleared'}), 200
+        return jsonify({'success': True, 'message': 'No cookies to clear'}), 200
+
 @app.route('/api/extract', methods=['POST'])
 def extract():
     """提取视频信息API"""
@@ -752,11 +799,12 @@ def extract():
     except Exception as e:
         return jsonify({'error': f"{t('extract_failed', lang)}: {str(e)}"}), 500
 
-def download_video_async(task_id, url, format_id, video_url, method):
+def download_video_async(task_id, url, format_id, video_url, method, user_cookie_file=None):
     """異步下載視頻"""
     file_id = str(uuid.uuid4())
     lang = get_language()
     format_id = normalize_format_id(format_id)
+    cookie_file = get_cookie_file(user_cookie_file)
     try:
         update_status(task_id, 'processing', 'status_obtaining', 5, lang)
         
@@ -818,7 +866,6 @@ def download_video_async(task_id, url, format_id, video_url, method):
                     'preferedformat': MERGE_OUTPUT_FORMAT
                 }]
             }
-            cookie_file = get_cookie_file()
             if cookie_file:
                 ydl_opts['cookiefile'] = cookie_file
             
@@ -887,9 +934,8 @@ def download_video_async(task_id, url, format_id, video_url, method):
                                     'preferedformat': MERGE_OUTPUT_FORMAT
                                 }]
                             }
-                        cookie_file = get_cookie_file()
-                        if cookie_file:
-                            ydl_opts['cookiefile'] = cookie_file
+                            if cookie_file:
+                                ydl_opts['cookiefile'] = cookie_file
                             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                                 info = ydl.extract_info(video_url_to_download, download=True)
                                 downloaded_file = ydl.prepare_filename(info)
@@ -937,8 +983,11 @@ def download():
     task_id = str(uuid.uuid4())
     update_status(task_id, 'processing', 'status_starting', 0, lang)
     
-    # 启动异步下载任务
-    thread = threading.Thread(target=download_video_async, args=(task_id, url, format_id, video_url, method))
+    session_cookie = get_session_cookie_path()
+    thread = threading.Thread(
+        target=download_video_async,
+        args=(task_id, url, format_id, video_url, method, session_cookie)
+    )
     thread.daemon = True
     thread.start()
     
@@ -1144,7 +1193,10 @@ def api_download():
     update_status(task_id, 'processing', 'status_starting', 0, lang)
     
     # 启动异步下载任务
-    thread = threading.Thread(target=download_video_async, args=(task_id, url, format_id, video_url, method))
+    thread = threading.Thread(
+        target=download_video_async,
+        args=(task_id, url, format_id, video_url, method, None)
+    )
     thread.daemon = True
     thread.start()
     

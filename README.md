@@ -215,6 +215,22 @@ curl -X POST https://your-domain.com/api/v1/download \
 
 上述任一方式提供即足夠；若兩者皆未設定，預設僅能下載公開影片。
 
+#### 使用 UI 上傳 cookies（推薦）
+1. 在本地電腦登入 YouTube
+2. 導出 cookies.txt（可使用下方自動化腳本）
+3. 於網頁介面「上傳 cookies.txt」區塊上傳檔案
+4. 該 cookies 僅限目前瀏覽器 session 使用，可隨時按「清除」移除
+
+#### 使用自動化腳本導出 cookies
+專案提供 `tools/export_cookies.py`，可自動讀取瀏覽器 cookies 並輸出 cookies.txt：
+
+```bash
+pip install browser-cookie3
+python tools/export_cookies.py --browser chrome --domain youtube.com --output cookies.txt
+```
+
+支援的瀏覽器包含 Chrome / Edge / Brave / Firefox 等，詳細參數請執行 `-h` 查看說明。
+
 ### 支援的網站類型
 
 - **yt-dlp 支援的網站**：YouTube、Vimeo、Twitter、Facebook 等（完整列表請參考 [yt-dlp 文檔](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md)）

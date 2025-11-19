@@ -279,6 +279,33 @@
             border-color: #667eea;
         }
 
+        .cookies-group {
+            margin-top: 20px;
+        }
+
+        .cookies-group input[type="file"] {
+            width: 100%;
+            margin-top: 8px;
+        }
+
+        .cookie-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+            flex-wrap: wrap;
+        }
+
+        .cookie-actions button {
+            flex: 1;
+        }
+
+        .cookie-status {
+            font-size: 0.85em;
+            color: #666;
+            margin-top: 8px;
+            min-height: 20px;
+        }
+
         .format-group {
             margin-top: 20px;
         }
@@ -472,6 +499,20 @@
             <select id="formatSelect" disabled>
                 <option value="" data-i18n="select_format">請選擇格式</option>
             </select>
+        </div>
+
+        <div class="cookies-group">
+            <label for="cookiesFile" data-i18n="upload_cookies_label">上傳 cookies.txt（可選）</label>
+            <input type="file" id="cookiesFile" accept=".txt">
+            <div class="cookie-actions">
+                <button type="button" class="btn-secondary" onclick="uploadCookies()" data-i18n="upload_cookies_button">
+                    上傳 Cookies
+                </button>
+                <button type="button" class="btn-secondary" onclick="clearCookies()" data-i18n="clear_cookies_button">
+                    清除 Cookies
+                </button>
+            </div>
+            <p class="cookie-status" id="cookieStatus"></p>
         </div>
 
         <div class="loading" id="loading" style="display: none;">
@@ -770,6 +811,59 @@
             } else {
                 formatSelect.value = '';
                 updateCurrentFormat('best');
+            }
+        }
+
+        function setCookieStatus(message, isError = false) {
+            const statusEl = document.getElementById('cookieStatus');
+            if (!statusEl) return;
+            statusEl.textContent = message || '';
+            statusEl.style.color = isError ? '#c33' : '#666';
+        }
+
+        async function uploadCookies() {
+            const fileInput = document.getElementById('cookiesFile');
+            if (!fileInput || !fileInput.files.length) {
+                showError(t('select_cookie_file'));
+                return;
+            }
+            const formData = new FormData();
+            formData.append('cookies', fileInput.files[0]);
+            try {
+                const response = await fetch('/api/cookies', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.error || t('cookie_upload_error'));
+                }
+                setCookieStatus(t('cookie_upload_success'));
+                showSuccess(t('cookie_upload_success'));
+            } catch (error) {
+                const message = error.message || t('cookie_upload_error');
+                setCookieStatus(message, true);
+                showError(message);
+            }
+        }
+
+        async function clearCookies() {
+            try {
+                const response = await fetch('/api/cookies', { method: 'DELETE' });
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.error || t('cookie_upload_error'));
+                }
+                setCookieStatus(t('cookie_cleared'));
+                showSuccess(t('cookie_cleared'));
+                const fileInput = document.getElementById('cookiesFile');
+                if (fileInput) {
+                    fileInput.value = '';
+                }
+            } catch (error) {
+                const message = error.message || t('cookie_upload_error');
+                setCookieStatus(message, true);
+                showError(message);
             }
         }
 
