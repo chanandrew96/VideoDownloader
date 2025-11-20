@@ -79,7 +79,9 @@ TRANSLATIONS = {
         "cookie_upload_success": "Cookies 已成功上傳。",
         "cookie_upload_error": "Cookies 上傳失敗。",
         "cookie_cleared": "Cookies 已清除。",
-        "select_cookie_file": "請選擇 cookies.txt 檔案"
+        "select_cookie_file": "請選擇 cookies.txt 檔案",
+        "download_cookie_script_button": "下載匯出腳本",
+        "download_cookie_script_desc": "沒有 cookies.txt？點擊下載腳本，在本地執行即可匯出。"
     },
     "zh-CN": {
         "app_title": "Video Downloader",
@@ -160,7 +162,9 @@ TRANSLATIONS = {
         "cookie_upload_success": "Cookies 上传成功。",
         "cookie_upload_error": "Cookies 上传失败。",
         "cookie_cleared": "Cookies 已清除。",
-        "select_cookie_file": "请选择 cookies.txt 文件"
+        "select_cookie_file": "请选择 cookies.txt 文件",
+        "download_cookie_script_button": "下载导出脚本",
+        "download_cookie_script_desc": "没有 cookies.txt？点击下载脚本，在本地执行即可导出。"
     },
     "en": {
         "app_title": "Video Downloader",
@@ -241,7 +245,9 @@ TRANSLATIONS = {
         "cookie_upload_success": "Cookies uploaded successfully.",
         "cookie_upload_error": "Failed to upload cookies.",
         "cookie_cleared": "Cookies cleared.",
-        "select_cookie_file": "Please select a cookies.txt file"
+        "select_cookie_file": "Please select a cookies.txt file",
+        "download_cookie_script_button": "Download export script",
+        "download_cookie_script_desc": "Need cookies.txt? Download and run the helper script locally."
     }
 }
 

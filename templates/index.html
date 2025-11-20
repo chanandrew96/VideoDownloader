@@ -306,6 +306,12 @@
             min-height: 20px;
         }
 
+        .cookie-note {
+            font-size: 0.85em;
+            color: #555;
+            margin-top: 6px;
+        }
+
         .method-history {
             margin-top: 20px;
             background: #f5f5f5;
@@ -556,7 +562,13 @@
                 <button type="button" class="btn-secondary" onclick="clearCookies()" data-i18n="clear_cookies_button">
                     清除 Cookies
                 </button>
+                <button type="button" class="btn-secondary" onclick="downloadCookieScript()" data-i18n="download_cookie_script_button">
+                    下載匯出腳本
+                </button>
             </div>
+            <p class="cookie-note" data-i18n="download_cookie_script_desc">
+                沒有 cookies.txt？點擊下載腳本，在本地執行即可匯出。
+            </p>
             <p class="cookie-status" id="cookieStatus"></p>
         </div>
 
@@ -917,6 +929,10 @@
                 setCookieStatus(message, true);
                 showError(message);
             }
+        }
+
+        function downloadCookieScript() {
+            window.open('/download/cookie-script', '_blank');
         }
 
         function renderMethodHistory(methods = []) {

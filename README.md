@@ -220,12 +220,18 @@ curl -X POST https://your-domain.com/api/v1/download \
 
 #### 使用 UI 上傳 cookies（推薦）
 1. 在本地電腦登入 YouTube
-2. 導出 cookies.txt（可使用下方自動化腳本）
-3. 於網頁介面「上傳 cookies.txt」區塊上傳檔案
+2. 點擊介面上的「下載匯出腳本」按鈕取得 `export_cookies.ps1`
+3. 在本地執行該腳本即可自動導出 `cookies.txt`
+4. 於網頁介面「上傳 cookies.txt」區塊上傳檔案
 4. 該 cookies 僅限目前瀏覽器 session 使用，可隨時按「清除」移除
 
 #### 使用自動化腳本導出 cookies
-專案提供 `tools/export_cookies.py`，可自動讀取瀏覽器 cookies 並輸出 cookies.txt：
+專案提供兩種腳本：
+
+1. PowerShell 版（UI 提供下載）：適用 Windows，會自動安裝 `browser-cookie3` 並導出 cookies。
+2. Python 版（跨平台）：`tools/export_cookies.py`，可在任何有 Python 的環境執行。
+
+Python 版本使用方式：
 
 ```bash
 pip install browser-cookie3

@@ -767,6 +767,14 @@ def manage_cookies():
             return jsonify({'success': True, 'message': 'Cookies cleared'}), 200
         return jsonify({'success': True, 'message': 'No cookies to clear'}), 200
 
+@app.route('/download/cookie-script')
+def download_cookie_script():
+    """提供 cookies 匯出腳本"""
+    script_path = os.path.join(os.path.dirname(__file__), 'tools', 'export_cookies_win.ps1')
+    if not os.path.exists(script_path):
+        return jsonify({'error': 'Script not available'}), 404
+    return send_file(script_path, as_attachment=True, download_name='export_cookies.ps1')
+
 @app.route('/api/extract', methods=['POST'])
 def extract():
     """提取视频信息API"""
